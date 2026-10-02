@@ -1,0 +1,625 @@
+@page "/admin"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IGameDataStore Data
+@inject QrCodeService QrService
+@inject GameEventService EventService
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject RouteGeneratorService RouteGenerator
+@inject ImageProcessingService ImageService
+
+<PageTitle>Administration - KerRando QCM</PageTitle>
+
+<div class="admin-container">
+    <header class="admin-header">
+        <div>
+            <h1 class="admin-title">Administration</h1>
+            <p class="admin-subtitle">Gestion en temps réel des équipes et de leur progression</p>
+        </div>
+        <div class="admin-header-actions">
+            <a href="/admin/steps" class="btn-accent">Parcours</a>
+            <a href="/admin/supervision" class="btn-primary">Suivi en direct</a>
+            <a href="/projection" class="btn-primary">Projection</a>
+            <a href="/admin/export.csv" class="btn-primary">Exporter les résultats</a>
+            <form method="post" action="/admin/logout" class="inline-form">
+                <button type="submit" class="btn-danger-sm">Déconnexion</button>
+            </form>
+        </div>
+    </header>
+
+        <div class="kpi-grid">
+            <div class="kpi-card">
+                <span class="kpi-label">Équipes disponibles</span>
+                <span class="kpi-value">@teams.Count</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Étapes actives</span>
+                <span class="kpi-value">@stepsCount</span>
+            </div>
+            <div class="kpi-card">
+                <span class="kpi-label">Téléphones connectés</span>
+                <span class="kpi-value">@teamDevicesCount</span>
+            </div>
+        </div>
+
+        <section class="admin-card">
+            <div class="card-header">
+                <h2>État du rallye</h2>
+                <strong>@GetGamePhaseLabel()</strong>
+            </div>
+            <div class="game-launch-actions">
+                @if (gameState?.Phase is GamePhase.IN_PROGRESS)
+                {
+                    <button class="btn-accent" @onclick="() => SetGamePhase(GamePhase.PAUSED)">Mettre en pause</button>
+                    <button class="btn-danger-sm" @onclick="() => SetGamePhase(GamePhase.FINISHED)">Terminer le rallye</button>
+                }
+                else if (gameState?.Phase is GamePhase.PAUSED)
+                {
+                    <button class="btn-accent" @onclick="() => SetGamePhase(GamePhase.IN_PROGRESS)">Reprendre</button>
+                    <button class="btn-danger-sm" @onclick="() => SetGamePhase(GamePhase.FINISHED)">Terminer le rallye</button>
+                }
+                else
+                {
+                    <div class="admin-two-cols game-launch-configuration">
+                        <div class="form-field">
+                            <label class="form-label" for="finalWord">Mot final à retrouver</label>
+                            <input id="finalWord" @bind="finalWordInput" maxlength="30" class="form-control" autocomplete="off" placeholder="Mot sans espaces" />
+                        </div>
+                        <div class="form-field">
+                            <label class="form-label" for="transitionHint">Indication entre les étapes</label>
+                            <textarea id="transitionHint" @bind="transitionHintInput" class="form-control" rows="2" placeholder="Indiquez aux équipes où aller ensuite"></textarea>
+                        </div>
+                        <div class="form-field">
+                            <label class="form-label" for="transitionImage">Carte à afficher entre les étapes</label>
+                            <InputFile id="transitionImage" OnChange="HandleTransitionImageSelected" accept="image/*" />
+                            @if (isProcessingTransitionImage)
+                            {
+                                <p class="form-help">Préparation de l'image...</p>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(transitionImageData))
+                            {
+                                <img src="@transitionImageData" alt="Aperçu de la carte entre les étapes" class="question-media-preview" />
+                            }
+                        </div>
+                    </div>
+                    <button class="btn-launch-game" @onclick="StartGame" disabled="@(teams.Count == 0 || stepsCount == 0 || isStartingGame)">
+                        @(isStartingGame ? "Préparation du jeu..." : gameState?.Phase == GamePhase.FINISHED ? "LANCER UNE NOUVELLE PARTIE" : "LANCER LE JEU")
+                    </button>
+                    <p class="game-launch-help">Le mot restera secret. Les parcours sont générés automatiquement au départ.</p>
+                }
+                @if (!string.IsNullOrWhiteSpace(gameLaunchMessage))
+                {
+                    <div class="alert @(gameLaunchIsError ? "alert-danger" : "alert-success")">@gameLaunchMessage</div>
+                }
+            </div>
+        </section>
+
+        <!-- QR Code -->
+        <section class="admin-card">
+            <div class="card-header">
+                <h2>QR Code d'accès joueur</h2>
+            </div>
+            <div class="qr-layout">
+                <div class="qr-display">
+                    @if (!string.IsNullOrEmpty(qrCodeDataUri))
+                    {
+                        <img src="@qrCodeDataUri" alt="QR Code d'accès joueur" class="qr-image" />
+                    }
+                    else
+                    {
+                        <div class="qr-placeholder">Génération du code...</div>
+                    }
+                </div>
+                <div class="qr-details">
+                    <p>Faites scanner ce code aux participants pour qu'ils accèdent au formulaire d'inscription.</p>
+                    
+                    <div class="url-config-box">
+                        <label for="regUrl" class="form-label">Adresse encodée dans le QR Code :</label>
+                        <div class="url-input-group">
+                            <input id="regUrl" @bind="registrationUrl" class="form-control" />
+                            <button class="btn-primary" @onclick="UpdateQrCode">Mettre à jour</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Équipes -->
+        <section class="admin-card">
+            <div class="card-header">
+                <h2>Équipes du rallye</h2>
+            </div>
+            <p class="section-desc">
+                Créez chaque équipe avec le nom et la couleur qui seront affichés sur les téléphones des joueurs.
+            </p>
+
+            <div class="team-generator-controls">
+                <label for="teamName">Nom :</label>
+                <input id="teamName" @bind="newTeamName" class="form-control" placeholder="Ex. Les Marins" />
+                <label for="teamColor">Couleur :</label>
+                <input id="teamColor" type="color" @bind="newTeamColor" class="team-color-picker" />
+                <button class="btn-accent" @onclick="AddTeam" disabled="@isSavingTeam">Ajouter l'équipe</button>
+
+                @if (teams.Count > 0)
+                {
+                    <button class="btn-outline-danger" @onclick="ResetTeams">
+                        Réinitialiser
+                    </button>
+                }
+            </div>
+
+            @if (generationSuccessMessage != null)
+            {
+                <div class="alert alert-success mt-3">@generationSuccessMessage</div>
+            }
+
+            @if (teams.Count > 0)
+            {
+                <div class="teams-display-grid">
+                    @foreach (var team in teams)
+                    {
+                        var connectedDevices = teamDevices.Count(device => device.TeamId == team.Id && device.IsActive);
+                        <div class="team-panel" style="border-top-color: @(team.Color ?? "#2563eb")">
+                            <div class="team-panel-header" style="color: @(team.Color ?? "#2563eb")">
+                                <h3>@team.Name</h3>
+                                <button class="btn-icon-danger" @onclick="() => DeleteTeam(team.Id)" title="Supprimer l'équipe">Supprimer</button>
+                            </div>
+                            <span class="team-count">@connectedDevices appareil(s) connecté(s)</span>
+                            @foreach (var device in teamDevices.Where(device => device.TeamId == team.Id && device.IsActive))
+                            {
+                                <div class="device-row">
+                                    <span>Téléphone @device.Id[..Math.Min(6, device.Id.Length)] · vu @device.LastSeenAt.ToLocalTime().ToString("HH:mm")</span>
+                                    <button class="btn-text-muted" @onclick="() => RevokeDevice(device.Id)">Révoquer</button>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+
+        <section class="admin-card test-data-card">
+            <div class="card-header">
+                <h2>Données de test</h2>
+            </div>
+            <p class="section-desc">Créez rapidement des équipes, des questions et des étapes d'exemple pour tester le parcours.</p>
+            <button class="btn-secondary-sm" @onclick="CreateSampleData" disabled="@isCreatingSampleData">
+                @(isCreatingSampleData ? "Création en cours..." : "Créer les données de test")
+            </button>
+        </section>
+
+    </div>
+
+@code {
+    private List<Team> teams = new();
+    private List<TeamDevice> teamDevices = new();
+    private int teamDevicesCount;
+    private long stepsCount;
+
+    private string registrationUrl = string.Empty;
+    private string qrCodeDataUri = string.Empty;
+    private string newTeamName = string.Empty;
+    private string newTeamColor = "#2563eb";
+    private bool isSavingTeam;
+    private bool isCreatingSampleData;
+    private bool isStartingGame;
+    private string? generationSuccessMessage;
+    private string? gameLaunchMessage;
+    private bool gameLaunchIsError;
+    private string finalWordInput = string.Empty;
+    private string transitionHintInput = string.Empty;
+    private string? transitionImageData;
+    private bool isProcessingTransitionImage;
+    private GameState? gameState;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var uri = Nav.ToAbsoluteUri("/inscription");
+        registrationUrl = uri.ToString();
+
+        EventService.TeamsChanged += HandleDataUpdated;
+        await LoadAdminData();
+        UpdateQrCode();
+    }
+
+    private async Task HandleDataUpdated()
+    {
+        await LoadAdminData();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void UpdateQrCode()
+    {
+        if (!string.IsNullOrWhiteSpace(registrationUrl))
+        {
+            qrCodeDataUri = QrService.GenerateQrCodeDataUri(registrationUrl);
+        }
+    }
+
+    private async Task LoadAdminData()
+    {
+        try
+        {
+            teams = await Data.Teams.GetAllAsync();
+            teamDevices = await Data.TeamDevices.GetAllAsync();
+            teamDevicesCount = teamDevices.Count(device => device.IsActive);
+            stepsCount = await Data.Steps.CountAsync();
+            gameState = await Data.GameStates.FindOneAsync(_ => true);
+            if (gameState == null)
+            {
+                gameState = new GameState { Phase = GamePhase.READY };
+                await Data.GameStates.InsertOneAsync(gameState);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erreur chargement données admin: {ex.Message}");
+        }
+    }
+
+    private string GetGamePhaseLabel() => gameState?.Phase switch
+    {
+        GamePhase.IN_PROGRESS => "En cours",
+        GamePhase.PAUSED => "En pause",
+        GamePhase.FINISHED => "Terminé",
+        GamePhase.READY => "Prêt à démarrer",
+        _ => "En préparation"
+    };
+
+    private async Task SetGamePhase(GamePhase phase)
+    {
+        if (phase == GamePhase.FINISHED && !await JS.InvokeAsync<bool>("confirm", "Terminer le rallye ?")) return;
+        if (gameState == null) return;
+        await Data.GameStates.UpdateOneAsync(state => state.Id == gameState.Id, state =>
+        {
+            state.Phase = phase;
+            if (phase == GamePhase.IN_PROGRESS && state.StartedAt == null) state.StartedAt = DateTime.UtcNow;
+            if (phase == GamePhase.FINISHED) state.EndedAt = DateTime.UtcNow;
+        });
+        gameState.Phase = phase;
+        await EventService.NotifyGameStateChangedAsync();
+    }
+
+    private async Task StartGame()
+    {
+        if (isStartingGame) return;
+        isStartingGame = true;
+        gameLaunchMessage = null;
+        gameLaunchIsError = false;
+        try
+        {
+            teams = await Data.Teams.GetAllAsync();
+            var activeSteps = (await Data.Steps.GetAllAsync()).Where(step => step.IsActive).ToList();
+            if (teams.Count == 0)
+            {
+                gameLaunchMessage = "Créez au moins une équipe avant de lancer le jeu.";
+                gameLaunchIsError = true;
+                return;
+            }
+            if (activeSteps.Count == 0)
+            {
+                gameLaunchMessage = "Ajoutez au moins une étape active avant de lancer le jeu.";
+                gameLaunchIsError = true;
+                return;
+            }
+
+            var finalWord = finalWordInput.Trim().ToUpperInvariant();
+            if (finalWord.Length == 0 || finalWord.Any(character => !char.IsLetter(character)))
+            {
+                gameLaunchMessage = "Saisissez le mot final sans espaces ni chiffres.";
+                gameLaunchIsError = true;
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(transitionHintInput) || string.IsNullOrWhiteSpace(transitionImageData))
+            {
+                gameLaunchMessage = "Ajoutez une indication et une carte pour les transitions entre les étapes.";
+                gameLaunchIsError = true;
+                return;
+            }
+
+            var generatedRoutes = RouteGenerator.GenerateRoutes(teams, activeSteps);
+            var shuffledLetters = ShuffleLetters(finalWord);
+
+            var hasPreviousResults = await Data.Submissions.CountAsync() > 0 || await Data.GameScores.CountAsync() > 0;
+            var startingNewRound = gameState?.Phase == GamePhase.FINISHED || hasPreviousResults;
+            if (startingNewRound && !await JS.InvokeAsync<bool>("confirm", "Lancer une nouvelle partie effacera les réponses, les scores et la progression précédents. Continuer ?"))
+            {
+                return;
+            }
+
+            await Data.Submissions.DeleteAllAsync();
+            await Data.GameScores.DeleteAllAsync();
+            var routeStartTime = DateTime.UtcNow;
+            foreach (var team in teams)
+            {
+                await Data.Teams.UpdateOneAsync(currentTeam => currentTeam.Id == team.Id, currentTeam =>
+                {
+                    currentTeam.RouteStepIds = generatedRoutes[team.Id];
+                    currentTeam.CurrentStep = 1;
+                    currentTeam.TotalScore = 0;
+                    currentTeam.RevealedCharacters.Clear();
+                    currentTeam.IsBetweenSteps = false;
+                    currentTeam.FinalWordAttempt = string.Empty;
+                    currentTeam.FinalWordAccepted = null;
+                    currentTeam.FinalWordSubmittedAt = null;
+                    currentTeam.StartedAt = null;
+                    currentTeam.FinishedAt = null;
+                    currentTeam.UpdatedAt = routeStartTime;
+                });
+            }
+
+            if (gameState == null)
+            {
+                gameState = new GameState
+                {
+                    Phase = GamePhase.IN_PROGRESS,
+                    StartedAt = routeStartTime,
+                    FinalWord = finalWord,
+                    ShuffledLetters = shuffledLetters,
+                    TransitionHint = transitionHintInput.Trim(),
+                    TransitionImageData = transitionImageData
+                };
+                await Data.GameStates.InsertOneAsync(gameState);
+            }
+            else
+            {
+                await Data.GameStates.UpdateOneAsync(state => state.Id == gameState.Id, state =>
+                {
+                    state.Phase = GamePhase.IN_PROGRESS;
+                    state.StartedAt = routeStartTime;
+                    state.EndedAt = null;
+                    state.FinalWord = finalWord;
+                    state.ShuffledLetters = shuffledLetters;
+                    state.TransitionHint = transitionHintInput.Trim();
+                    state.TransitionImageData = transitionImageData;
+                });
+            }
+            gameState.Phase = GamePhase.IN_PROGRESS;
+            gameState.StartedAt = routeStartTime;
+            gameState.EndedAt = null;
+            gameState.FinalWord = finalWord;
+            gameState.ShuffledLetters = shuffledLetters;
+            gameState.TransitionHint = transitionHintInput.Trim();
+            gameState.TransitionImageData = transitionImageData;
+
+            gameLaunchMessage = "Les parcours ont été générés et le jeu est lancé !";
+            await LoadAdminData();
+            await EventService.NotifyTeamsChangedAsync();
+            await EventService.NotifyGameStateChangedAsync();
+        }
+        catch (InvalidOperationException ex)
+        {
+            gameLaunchMessage = ex.Message;
+            gameLaunchIsError = true;
+        }
+        catch (Exception ex)
+        {
+            gameLaunchMessage = $"Impossible de lancer le jeu : {ex.Message}";
+            gameLaunchIsError = true;
+        }
+        finally
+        {
+            isStartingGame = false;
+        }
+    }
+
+    private async Task HandleTransitionImageSelected(InputFileChangeEventArgs args)
+    {
+        isProcessingTransitionImage = true;
+        try
+        {
+            const long maxFileSize = 10 * 1024 * 1024;
+            await using var stream = args.File.OpenReadStream(maxFileSize);
+            transitionImageData = await ImageService.ResizeToDataUriAsync(stream);
+        }
+        catch (Exception ex)
+        {
+            gameLaunchMessage = $"Impossible de traiter la carte : {ex.Message}";
+            gameLaunchIsError = true;
+        }
+        finally
+        {
+            isProcessingTransitionImage = false;
+        }
+    }
+
+    private static string ShuffleLetters(string word)
+    {
+        var letters = word.ToCharArray();
+        for (var index = letters.Length - 1; index > 0; index--)
+        {
+            var swapIndex = Random.Shared.Next(index + 1);
+            (letters[index], letters[swapIndex]) = (letters[swapIndex], letters[index]);
+        }
+        return new string(letters);
+    }
+
+    private async Task RevokeDevice(string deviceId)
+    {
+        await Data.TeamDevices.UpdateOneAsync(device => device.Id == deviceId, device => device.IsActive = false);
+        await LoadAdminData();
+        await EventService.NotifyTeamsChangedAsync();
+    }
+
+    private async Task AddTeam()
+    {
+        if (string.IsNullOrWhiteSpace(newTeamName))
+        {
+            generationSuccessMessage = "Saisissez un nom d'équipe.";
+            return;
+        }
+
+        isSavingTeam = true;
+        generationSuccessMessage = null;
+
+        try
+        {
+            await Data.Teams.InsertOneAsync(new Team
+            {
+                Name = newTeamName.Trim(),
+                Color = newTeamColor,
+                CurrentStep = 1,
+                CreatedAt = DateTime.UtcNow,
+                UpdatedAt = DateTime.UtcNow
+            });
+            newTeamName = string.Empty;
+            newTeamColor = "#2563eb";
+            await LoadAdminData();
+            await EventService.NotifyTeamsChangedAsync();
+            generationSuccessMessage = "Équipe ajoutée. Vous pouvez en créer une autre.";
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"Erreur lors de la génération des équipes: {ex.Message}");
+        }
+        finally
+        {
+            isSavingTeam = false;
+        }
+    }
+
+    private async Task DeleteTeam(string teamId)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Supprimer cette équipe ? Cette action efface aussi ses appareils autorisés.")) return;
+
+        await Data.Teams.DeleteOneAsync(team => team.Id == teamId);
+        var teamDevices = await Data.TeamDevices.FindAsync(device => device.TeamId == teamId);
+        foreach (var device in teamDevices)
+        {
+            await Data.TeamDevices.DeleteOneAsync(deviceToDelete => deviceToDelete.Id == device.Id);
+        }
+        await LoadAdminData();
+        await EventService.NotifyTeamsChangedAsync();
+    }
+
+    private async Task ResetTeams()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Réinitialiser les équipes ? Cette action est irréversible.")) return;
+
+        await Data.Teams.DeleteAllAsync();
+        await Data.TeamDevices.DeleteAllAsync();
+        generationSuccessMessage = null;
+        await LoadAdminData();
+        await EventService.NotifyTeamsChangedAsync();
+    }
+
+    private async Task CreateSampleData()
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Créer les données d'exemple pour les tests ?")) return;
+
+        isCreatingSampleData = true;
+        generationSuccessMessage = null;
+        try
+        {
+            var sampleTeamDefinitions = new[]
+            {
+                (Name: "Test - Rouge", Color: "#dc2626"),
+                (Name: "Test - Bleu", Color: "#2563eb"),
+                (Name: "Test - Vert", Color: "#16a34a")
+            };
+
+            var existingTeams = await Data.Teams.GetAllAsync();
+            foreach (var definition in sampleTeamDefinitions)
+            {
+                if (existingTeams.Any(team => team.Name == definition.Name)) continue;
+                await Data.Teams.InsertOneAsync(new Team
+                {
+                    Name = definition.Name,
+                    Color = definition.Color,
+                    CurrentStep = 1,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                });
+            }
+
+            var sampleSteps = new List<Step>();
+            var sampleQuestions = new[]
+            {
+                CreateSampleQuestion("Quel animal vit dans une ruche ?", "Une abeille", "Un renard", "Un héron", "Un cheval", Choice.A),
+                CreateSampleQuestion("Quelle couleur obtient-on avec du bleu et du jaune ?", "Rouge", "Vert", "Orange", "Violet", Choice.B),
+                CreateSampleQuestion("Combien de côtés possède un triangle ?", "Deux", "Trois", "Quatre", "Cinq", Choice.B)
+            };
+
+            foreach (var question in sampleQuestions)
+            {
+                var existingQuestion = (await Data.Questions.GetAllAsync()).FirstOrDefault(item => item.Title == question.Title);
+                if (existingQuestion == null)
+                {
+                    await Data.Questions.InsertOneAsync(question);
+                    existingQuestion = question;
+                }
+
+                var stepName = $"Test - {question.Title}";
+                var existingStep = (await Data.Steps.GetAllAsync()).FirstOrDefault(step => step.Name == stepName);
+                if (existingStep == null)
+                {
+                    existingStep = new QcmStep
+                    {
+                        Name = stepName,
+                        Type = StepType.QCM,
+                        Destination = "Point de test",
+                        Instructions = "Répondez à cette question d'exemple.",
+                        QuestionId = existingQuestion.Id,
+                        QrToken = Guid.NewGuid().ToString("N"),
+                        ShortCode = Random.Shared.Next(100000, 1000000).ToString(),
+                        IsActive = true
+                    };
+                    await Data.Steps.InsertOneAsync(existingStep);
+                }
+                sampleSteps.Add(existingStep);
+            }
+
+            var refreshedTeams = await Data.Teams.GetAllAsync();
+            var sampleTeams = refreshedTeams.Where(team => sampleTeamDefinitions.Any(definition => definition.Name == team.Name)).ToList();
+            var generatedRoutes = RouteGenerator.GenerateRoutes(sampleTeams, sampleSteps);
+            foreach (var team in sampleTeams)
+            {
+                await Data.Teams.UpdateOneAsync(currentTeam => currentTeam.Id == team.Id, currentTeam =>
+                {
+                    currentTeam.RouteStepIds = generatedRoutes[team.Id];
+                    currentTeam.CurrentStep = 1;
+                    currentTeam.TotalScore = 0;
+                    currentTeam.UpdatedAt = DateTime.UtcNow;
+                });
+            }
+
+            generationSuccessMessage = "Données de test créées. Les équipes peuvent commencer leur parcours.";
+            await LoadAdminData();
+            await EventService.NotifyTeamsChangedAsync();
+        }
+        catch (Exception ex)
+        {
+            generationSuccessMessage = $"Erreur lors de la création des données de test : {ex.Message}";
+        }
+        finally
+        {
+            isCreatingSampleData = false;
+        }
+    }
+
+    private static Question CreateSampleQuestion(string title, string optionA, string optionB, string optionC, string optionD, Choice correctAnswer) => new()
+    {
+        Title = title,
+        AnswerType = AnswerContentType.TEXT,
+        OptionA = optionA,
+        OptionB = optionB,
+        OptionC = optionC,
+        OptionD = optionD,
+        Options = new List<AnswerOption>
+        {
+            new() { Choice = Choice.A, Content = optionA },
+            new() { Choice = Choice.B, Content = optionB },
+            new() { Choice = Choice.C, Content = optionC },
+            new() { Choice = Choice.D, Content = optionD }
+        },
+        CorrectAnswer = correctAnswer,
+        Points = 10
+    };
+
+    public void Dispose()
+    {
+        EventService.TeamsChanged -= HandleDataUpdated;
+    }
+}

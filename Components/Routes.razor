@@ -1,0 +1,19 @@
+<Router AppAssembly="@typeof(Program).Assembly">
+    <Found Context="routeData">
+        <AuthorizeRouteView RouteData="@routeData" DefaultLayout="@typeof(Layout.MainLayout)">
+            <NotAuthorized>
+                <RedirectToLogin />
+            </NotAuthorized>
+        </AuthorizeRouteView>
+        <FocusOnNavigate RouteData="@routeData" Selector="h1" />
+    </Found>
+    <NotFound>
+        <LayoutView Layout="@typeof(Layout.MainLayout)">
+            <div class="not-found-card">
+                <h1>Page non trouvée</h1>
+                <p>Cette page n'existe pas ou le lien est incorrect.</p>
+                <a href="/" class="btn-primary-large">Retour à l'accueil</a>
+            </div>
+        </LayoutView>
+    </NotFound>
+</Router>

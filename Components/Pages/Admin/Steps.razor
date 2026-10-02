@@ -1,0 +1,372 @@
+@page "/admin/steps"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject IGameDataStore Data
+@inject IJSRuntime JS
+@inject ImageProcessingService ImageService
+@inject GameEventService EventService
+@inject QrCodeService QrService
+@inject NavigationManager Nav
+
+<PageTitle>Édition du parcours - KerRando QCM</PageTitle>
+
+<div class="admin-container">
+    <header class="admin-header">
+        <div>
+            <h1 class="admin-title">Édition du parcours</h1>
+            <p class="admin-subtitle">Créez les étapes et leur contenu au même endroit, puis publiez leur ordre aux équipes.</p>
+        </div>
+        <div class="admin-header-actions">
+            <a href="/admin" class="btn-outline-danger">Retour au tableau de bord</a>
+        </div>
+    </header>
+
+    <section class="admin-card">
+        <div class="card-header"><h2>Nouvelle étape</h2></div>
+        <div class="admin-two-cols">
+            <div class="form-field">
+                <label class="form-label" for="stepName">Nom de l'étape</label>
+                <input id="stepName" @bind="newStep.Name" class="form-control" placeholder="Ex. Le vieux puits" />
+            </div>
+            <div class="form-field">
+                <label class="form-label" for="stepType">Type</label>
+                <select id="stepType" value="@selectedType" @onchange="ChangeStepType" class="select-control">
+                    <option value="@StepType.QCM">QCM</option>
+                    <option value="@StepType.GAME">Jeu</option>
+                </select>
+            </div>
+            <div class="form-field">
+                <label class="form-label" for="destination">Destination</label>
+                <input id="destination" @bind="newStep.Destination" class="form-control" placeholder="Ex. Place de l'église" />
+            </div>
+        </div>
+        <div class="form-field">
+            <label class="form-label" for="instructions">Consignes</label>
+            <textarea id="instructions" @bind="newStep.Instructions" class="form-control" rows="3"></textarea>
+        </div>
+        @if (selectedType == StepType.QCM)
+        {
+            <div class="step-content-editor">
+                <h3>Question QCM</h3>
+                <div class="form-field">
+                    <label class="form-label" for="questionTitle">Question</label>
+                    <input id="questionTitle" @bind="editingQuestion.Title" class="form-control" placeholder="Écrivez la question" />
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="questionImage">Photo de la question (facultatif)</label>
+                    <InputFile id="questionImage" OnChange="HandleQuestionImageSelected" accept="image/*" />
+                    @if (!string.IsNullOrWhiteSpace(editingQuestion.ImageData))
+                    {
+                        <img src="@editingQuestion.ImageData" alt="Aperçu de la photo de la question" class="question-media-preview" />
+                    }
+                </div>
+                <div class="form-field">
+                    <label class="form-label" for="answerType">Type des réponses</label>
+                    <select id="answerType" @bind="editingQuestion.AnswerType" class="select-control">
+                        <option value="@AnswerContentType.TEXT">Texte</option>
+                        <option value="@AnswerContentType.AUDIO">Son</option>
+                        <option value="@AnswerContentType.IMAGE">Photo</option>
+                    </select>
+                </div>
+                <div class="admin-two-cols">
+                    @foreach (var option in editingQuestion.Options)
+                    {
+                        <div class="form-field">
+                            <label class="form-label">Réponse @option.Choice</label>
+                            @if (editingQuestion.AnswerType == AnswerContentType.TEXT)
+                            {
+                                <input @bind="option.Content" class="form-control" placeholder="Texte de la réponse" />
+                            }
+                            else
+                            {
+                                <InputFile OnChange="@(args => HandleOptionFileSelected(option, args))" accept="@(editingQuestion.AnswerType == AnswerContentType.IMAGE ? "image/*" : "audio/*")" />
+                                <input @bind="option.Content" class="form-control" placeholder="URL du média (facultatif)" />
+                            }
+                            @if (editingQuestion.Options.Count > 2)
+                            {
+                                <button type="button" class="btn-outline-danger" @onclick="() => RemoveOption(option)">Retirer</button>
+                            }
+                        </div>
+                    }
+                </div>
+                @if (editingQuestion.Options.Count < 4)
+                {
+                    <button type="button" class="btn-primary step-editor-action" @onclick="AddOption">Ajouter une réponse</button>
+                }
+                <div class="admin-two-cols">
+                    <div class="form-field">
+                        <label class="form-label" for="correctAnswer">Bonne réponse</label>
+                        <select id="correctAnswer" @bind="editingQuestion.CorrectAnswer" class="select-control">
+                            @foreach (var option in editingQuestion.Options)
+                            {
+                                <option value="@option.Choice">@option.Choice</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="form-field"><label class="form-label" for="questionPoints">Points</label><input id="questionPoints" type="number" min="0" @bind="editingQuestion.Points" class="form-control" /></div>
+                </div>
+            </div>
+        }
+        else if (newStep is GameStep gameStep)
+        {
+            <div class="step-content-editor">
+                <h3>Barème du jeu</h3>
+                <p class="form-help">Indiquez la fourchette de points que l'équipe peut obtenir pour ce jeu.</p>
+                <div class="admin-two-cols">
+                    <div class="form-field"><label class="form-label" for="minPoints">Points minimum</label><input id="minPoints" type="number" min="0" @bind="gameStep.MinPoints" class="form-control" /></div>
+                    <div class="form-field"><label class="form-label" for="maxPoints">Points maximum</label><input id="maxPoints" type="number" min="0" @bind="gameStep.MaxPoints" class="form-control" /></div>
+                </div>
+            </div>
+        }
+
+        <button class="btn-primary step-editor-action" @onclick="AddStep" disabled="@(isSaving || isProcessingMedia)">
+            @(selectedType == StepType.QCM ? "Enregistrer la question et ajouter l'étape" : "Ajouter l'étape")
+        </button>
+        @if (!string.IsNullOrEmpty(message))
+        {
+            <div class="alert @(messageIsError ? "alert-danger" : "alert-success") mt-3">@message</div>
+        }
+    </section>
+
+    <section class="admin-card">
+        <div class="card-header">
+            <h2>Ordre du parcours (@steps.Count étapes)</h2>
+        </div>
+        <p class="section-desc">Les parcours de toutes les équipes seront générés automatiquement au lancement, avec des ordres différents et au plus deux étapes consécutives communes.</p>
+        <div class="table-responsive">
+            <table class="admin-table">
+                <thead><tr><th>#</th><th>Étape</th><th>Type</th><th>Contenu</th><th>Destination</th><th>QR</th><th>Code de secours</th><th></th></tr></thead>
+                <tbody>
+                    @foreach (var (step, index) in steps.Select((value, index) => (value, index)))
+                    {
+                        <tr>
+                            <td>@(index + 1)</td>
+                            <td><strong>@step.Name</strong><br /><span class="text-muted">@step.Instructions</span></td>
+                            <td>@(step.Type == StepType.QCM ? "QCM" : "Jeu")</td>
+                            <td>
+                                @if (step is GameStep listedGame)
+                                {
+                                    <span>@listedGame.MinPoints à @listedGame.MaxPoints points</span>
+                                }
+                                else if (questionTitles.TryGetValue(((QcmStep)step).QuestionId ?? string.Empty, out var title))
+                                {
+                                    <span>@title</span>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">Non configuré</span>
+                                }
+                            </td>
+                            <td>@step.Destination</td>
+                            <td>
+                                @if (!string.IsNullOrWhiteSpace(step.QrToken))
+                                {
+                                    <img src="@QrService.GenerateQrCodeDataUri(Nav.ToAbsoluteUri($"/scan/{step.QrToken}").ToString())" alt="QR de @step.Name" class="step-qr-image" />
+                                }
+                            </td>
+                            <td><strong>@step.ShortCode</strong></td>
+                            <td><button class="btn-icon-danger" @onclick="() => DeleteStep(step.Id)">Supprimer</button></td>
+                        </tr>
+                    }
+                    @if (steps.Count == 0)
+                    {
+                        <tr><td colspan="8" class="text-center text-muted">Aucune étape active.</td></tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </section>
+</div>
+
+@code {
+    private Step newStep = new QcmStep();
+    private Question editingQuestion = CreateQuestion();
+    private StepType selectedType = StepType.QCM;
+    private List<Step> steps = new();
+    private Dictionary<string, string> questionTitles = new();
+    private string? message;
+    private bool messageIsError;
+    private bool isSaving;
+    private bool isProcessingMedia;
+
+    protected override async Task OnInitializedAsync() => await LoadData();
+
+    private async Task LoadData()
+    {
+        steps = (await Data.Steps.GetAllAsync()).Where(step => step.IsActive).ToList();
+        questionTitles = (await Data.Questions.GetAllAsync()).ToDictionary(question => question.Id, question => question.Title);
+    }
+
+    private void ChangeStepType(ChangeEventArgs args)
+    {
+        if (!Enum.TryParse<StepType>(args.Value?.ToString(), out var type)) return;
+        selectedType = type;
+        newStep = type == StepType.QCM ? new QcmStep() : new GameStep();
+        editingQuestion = CreateQuestion();
+        message = null;
+    }
+
+    private async Task AddStep()
+    {
+        messageIsError = true;
+        if (string.IsNullOrWhiteSpace(newStep.Name) || string.IsNullOrWhiteSpace(newStep.Destination))
+        {
+            message = "Le nom et la destination sont obligatoires.";
+            return;
+        }
+
+        if (selectedType == StepType.QCM && (string.IsNullOrWhiteSpace(editingQuestion.Title) || editingQuestion.Options.Count is < 2 or > 4 || editingQuestion.Options.Any(option => string.IsNullOrWhiteSpace(option.Content))))
+        {
+            message = "Renseignez la question et entre deux et quatre réponses.";
+            return;
+        }
+
+        if (newStep is GameStep gameStep && (gameStep.MinPoints < 0 || gameStep.MaxPoints < gameStep.MinPoints))
+        {
+            message = "La fourchette de points est invalide.";
+            return;
+        }
+
+        isSaving = true;
+        newStep.Name = newStep.Name.Trim();
+        newStep.Destination = newStep.Destination.Trim();
+        newStep.Instructions = newStep.Instructions.Trim();
+        newStep.ShortCode = await GenerateShortCode();
+        newStep.QrToken = Guid.NewGuid().ToString("N");
+
+        if (newStep is QcmStep qcmStep)
+        {
+            CopyOptionsToLegacyFields(editingQuestion);
+            editingQuestion.StationId = null;
+            await Data.Questions.InsertOneAsync(editingQuestion);
+            qcmStep.QuestionId = editingQuestion.Id;
+        }
+
+        await Data.Steps.InsertOneAsync(newStep);
+        newStep = new QcmStep();
+        editingQuestion = CreateQuestion();
+        selectedType = StepType.QCM;
+        messageIsError = false;
+        message = "Étape ajoutée. Générez puis publiez le parcours pour la rendre accessible aux équipes.";
+        await LoadData();
+        isSaving = false;
+    }
+
+    private static Question CreateQuestion() => new()
+    {
+        Points = 10,
+        Options = new List<AnswerOption>
+        {
+            new() { Choice = Choice.A },
+            new() { Choice = Choice.B }
+        }
+    };
+
+    private void AddOption()
+    {
+        if (editingQuestion.Options.Count >= 4) return;
+        var nextChoice = (Choice)editingQuestion.Options.Count;
+        editingQuestion.Options.Add(new AnswerOption { Choice = nextChoice });
+    }
+
+    private void RemoveOption(AnswerOption option)
+    {
+        if (editingQuestion.Options.Count <= 2) return;
+        editingQuestion.Options.Remove(option);
+        for (var index = 0; index < editingQuestion.Options.Count; index++)
+        {
+            editingQuestion.Options[index].Choice = (Choice)index;
+        }
+        if (!editingQuestion.Options.Any(current => current.Choice == editingQuestion.CorrectAnswer))
+        {
+            editingQuestion.CorrectAnswer = editingQuestion.Options[0].Choice;
+        }
+    }
+
+    private static void CopyOptionsToLegacyFields(Question question)
+    {
+        question.OptionA = question.Options.ElementAtOrDefault(0)?.Content ?? string.Empty;
+        question.OptionB = question.Options.ElementAtOrDefault(1)?.Content ?? string.Empty;
+        question.OptionC = question.Options.ElementAtOrDefault(2)?.Content ?? string.Empty;
+        question.OptionD = question.Options.ElementAtOrDefault(3)?.Content ?? string.Empty;
+    }
+
+    private async Task HandleOptionFileSelected(AnswerOption option, InputFileChangeEventArgs args)
+    {
+        isProcessingMedia = true;
+        try
+        {
+            const long maxFileSize = 10 * 1024 * 1024;
+            await using var stream = args.File.OpenReadStream(maxFileSize);
+            if (editingQuestion.AnswerType == AnswerContentType.IMAGE)
+            {
+                option.Content = await ImageService.ResizeToDataUriAsync(stream);
+            }
+            else
+            {
+                await using var memoryStream = new MemoryStream();
+                await stream.CopyToAsync(memoryStream);
+                option.Content = $"data:{args.File.ContentType};base64,{Convert.ToBase64String(memoryStream.ToArray())}";
+            }
+        }
+        catch (Exception ex)
+        {
+            messageIsError = true;
+            message = $"Impossible de traiter le média : {ex.Message}";
+        }
+        finally
+        {
+            isProcessingMedia = false;
+        }
+    }
+
+    private async Task HandleQuestionImageSelected(InputFileChangeEventArgs args)
+    {
+        isProcessingMedia = true;
+        try
+        {
+            const long maxFileSize = 10 * 1024 * 1024;
+            await using var stream = args.File.OpenReadStream(maxFileSize);
+            editingQuestion.ImageData = await ImageService.ResizeToDataUriAsync(stream);
+        }
+        catch (Exception ex)
+        {
+            messageIsError = true;
+            message = $"Impossible de traiter la photo : {ex.Message}";
+        }
+        finally
+        {
+            isProcessingMedia = false;
+        }
+    }
+
+    private async Task<string> GenerateShortCode()
+    {
+        var existingCodes = (await Data.Steps.GetAllAsync())
+            .Where(step => !string.IsNullOrWhiteSpace(step.ShortCode))
+            .Select(step => step.ShortCode!)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        string code;
+        do
+        {
+            code = Random.Shared.Next(100000, 1000000).ToString();
+        }
+        while (existingCodes.Contains(code));
+
+        return code;
+    }
+
+    private async Task DeleteStep(string stepId)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Supprimer cette étape du parcours ?")) return;
+        var step = await Data.Steps.FindOneAsync(currentStep => currentStep.Id == stepId);
+        await Data.Steps.DeleteOneAsync(currentStep => currentStep.Id == stepId);
+        if (step is QcmStep qcmStep && !string.IsNullOrEmpty(qcmStep.QuestionId))
+        {
+            await Data.Questions.DeleteOneAsync(question => question.Id == qcmStep.QuestionId);
+        }
+        await LoadData();
+    }
+
+}

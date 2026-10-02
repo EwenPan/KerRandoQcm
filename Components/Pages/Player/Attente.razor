@@ -1,0 +1,96 @@
+@page "/attente/{TeamId}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IGameDataStore Data
+@inject GameEventService EventService
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+
+<PageTitle>Équipe - KerRando QCM</PageTitle>
+
+<div class="player-container">
+    @if (isLoading)
+    {
+        <div class="player-card text-center"><p>Chargement de l'équipe...</p></div>
+    }
+    else if (team == null)
+    {
+        <div class="player-card text-center">
+            <h1 class="player-title">Équipe introuvable</h1>
+            <p class="player-subtitle">Demandez à l'organisateur de vérifier le lien ou choisissez une équipe.</p>
+            <a href="/inscription" class="btn-senior-submit">Choisir une équipe</a>
+        </div>
+    }
+    else
+    {
+        <div class="player-card">
+            <div class="player-header">
+                <span class="player-badge">Votre équipe</span>
+                <h1 class="player-title" style="color: @(team.Color ?? "#2563eb")">@team.Name</h1>
+                <p class="player-subtitle">Tous les téléphones de cette équipe partagent la même progression.</p>
+            </div>
+
+            <div class="team-assigned-box" style="border-top: 6px solid @(team.Color ?? "#2563eb")">
+                <span class="team-badge" style="background-color: @(team.Color ?? "#2563eb")">Équipe sélectionnée</span>
+                <h2 class="team-title" style="color: @(team.Color ?? "#2563eb")">@team.Name</h2>
+                <p class="team-instruction">L'organisateur lancera le parcours quand toutes les équipes seront prêtes.</p>
+
+                @if (team.RouteStepIds.Count == 0)
+                {
+                    <div class="waiting-box">
+                        <h2>En attente du parcours</h2>
+                        <p class="waiting-desc">L'équipe est bien enregistrée. L'accès au jeu apparaîtra dès que le parcours sera publié.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="ready-banner">
+                        <p>Votre parcours est prêt. Vous pouvez commencer l'aventure.</p>
+                    </div>
+                    <a href="/jeu/@team.Id" class="btn-senior-submit game-start-link">Commencer le parcours</a>
+                }
+            </div>
+
+            <div class="session-footer">
+                <button type="button" class="btn-text-muted" @onclick="LeaveTeam">Changer d'équipe</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string TeamId { get; set; } = string.Empty;
+
+    private Team? team;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        EventService.TeamsChanged += HandleTeamsChanged;
+        await LoadTeam();
+    }
+
+    private async Task LoadTeam()
+    {
+        team = await Data.Teams.FindOneAsync(currentTeam => currentTeam.Id == TeamId);
+        isLoading = false;
+    }
+
+    private async Task HandleTeamsChanged()
+    {
+        await LoadTeam();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LeaveTeam()
+    {
+        await JS.InvokeVoidAsync("kerrandoSession.clearTeamId");
+        await JS.InvokeVoidAsync("kerrandoSession.clearDeviceToken");
+        Nav.NavigateTo("/inscription");
+    }
+
+    public void Dispose()
+    {
+        EventService.TeamsChanged -= HandleTeamsChanged;
+    }
+}

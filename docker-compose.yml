@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  mongodb:
+    image: mongo:7.0
+    container_name: kerrandoqcm_mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kerrandoqcm_app
+    restart: unless-stopped
+    ports:
+      - "5000:8080"
+    environment:
+      - UseInMemoryStore=false
+      - ConnectionStrings__MongoDB=mongodb://mongodb:27017
+      - MongoDbSettings__DatabaseName=KerRandoQcmDb
+      - ADMIN_PASSWORD=admin123
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://0.0.0.0:8080
+    depends_on:
+      - mongodb
+
+volumes:
+  mongo_data:

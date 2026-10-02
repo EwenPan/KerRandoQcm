@@ -1,0 +1,67 @@
+@page "/scan/{StepToken}"
+@rendermode InteractiveServer
+@inject IGameDataStore Data
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>Accès à l'étape - KerRando QCM</PageTitle>
+
+<div class="player-container">
+    <div class="player-card text-center">
+        @if (isLoading)
+        {
+            <p>Vérification de l'étape...</p>
+        }
+        else if (!string.IsNullOrWhiteSpace(errorMessage))
+        {
+            <h1 class="player-title">Étape indisponible</h1>
+            <p class="player-subtitle">@errorMessage</p>
+            <a href="/inscription" class="btn-senior-submit">Choisir une équipe</a>
+        }
+        else
+        {
+            <p>Ouverture de l'étape...</p>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public string StepToken { get; set; } = string.Empty;
+
+    private bool isLoading = true;
+    private string? errorMessage;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+
+        var teamId = await JS.InvokeAsync<string?>("kerrandoSession.getTeamId");
+        var shortCode = StepToken.Trim().ToUpperInvariant();
+        var step = await Data.Steps.FindOneAsync(currentStep =>
+            (currentStep.QrToken == StepToken || currentStep.ShortCode == shortCode) && currentStep.IsActive);
+        var team = string.IsNullOrWhiteSpace(teamId)
+            ? null
+            : await Data.Teams.FindOneAsync(currentTeam => currentTeam.Id == teamId);
+
+        if (step == null)
+        {
+            errorMessage = "Ce QR code n'est plus valide.";
+        }
+        else if (team == null)
+        {
+            errorMessage = "Choisissez d'abord une équipe depuis la page d'inscription.";
+        }
+        else if (team.CurrentStep < 1 || team.CurrentStep > team.RouteStepIds.Count || team.RouteStepIds[team.CurrentStep - 1] != step.Id)
+        {
+            errorMessage = "Ce n'est pas l'étape attendue pour votre équipe.";
+        }
+        else
+        {
+            Nav.NavigateTo($"/jeu/{team.Id}");
+            return;
+        }
+
+        isLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+}

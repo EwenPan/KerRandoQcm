@@ -1,0 +1,172 @@
+@page "/projection"
+@layout Layout.ProjectionLayout
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IGameDataStore Data
+@inject GameEventService EventService
+
+<PageTitle>Classement en direct - KerRando QCM</PageTitle>
+
+<main class="projection-page">
+    <header class="projection-header">
+        <div>
+            <p class="projection-eyebrow">KerRando QCM · Classement en direct</p>
+            <h1>@GetPhaseLabel()</h1>
+        </div>
+        @if (gameState?.StartedAt is DateTime startedAt)
+        {
+            <div class="projection-clock">Départ · @startedAt.ToLocalTime().ToString("HH:mm")</div>
+        }
+    </header>
+
+    @if (projectionTeams.Count == 0)
+    {
+        <p class="projection-empty">Aucune équipe n'est encore inscrite.</p>
+    }
+    else
+    {
+        <section class="projection-team-list" aria-label="Classement des équipes">
+            @foreach (var item in projectionTeams)
+            {
+                <article class="projection-team" style="--team-color: @(item.Team.Color ?? "#2563eb")">
+                    <div class="projection-rank">@(item.Rank).</div>
+                    <div class="projection-team-main">
+                        <div class="projection-team-heading">
+                            <h2>@item.Team.Name</h2>
+                            <strong>@item.Team.TotalScore <span>points</span></strong>
+                        </div>
+                        <p class="projection-team-status">@item.Status</p>
+                        <div class="projection-progress-line">
+                            <div class="projection-progress-track"><div style="width: @(item.ProgressPercent)%"></div></div>
+                            <span>@item.Completed / @item.Route.Count étapes</span>
+                        </div>
+                        <p class="projection-current-step">
+                            @if (item.CurrentStep == null)
+                            {
+                                <span>Parcours terminé</span>
+                            }
+                            else
+                            {
+                                <span>En route vers <strong>@item.CurrentStep.Destination</strong> · @item.CurrentStep.Name</span>
+                            }
+                        </p>
+                        @if (item.RawGameScores.Count > 0)
+                        {
+                            <details class="projection-details">
+                                <summary>Détail des jeux</summary>
+                                <div class="projection-result-columns">
+                                    @foreach (var result in item.RawGameScores)
+                                    {
+                                        <p>@result.StepName : @result.Score.RawScore points bruts@(result.Score.RankPointsAwarded.HasValue ? $", {result.Score.RankPointsAwarded} points de classement" : $", classement en attente, {result.RemainingTeams} équipe(s) à jouer")</p>
+                                    }
+                                </div>
+                            </details>
+                        }
+                    </div>
+                </article>
+            }
+        </section>
+    }
+</main>
+
+@code {
+    private List<ProjectionTeam> projectionTeams = new();
+    private GameState? gameState;
+
+    protected override async Task OnInitializedAsync()
+    {
+        EventService.TeamsChanged += HandleChanged;
+        EventService.GameStateChanged += HandleChanged;
+        EventService.TeamScoreChanged += HandleTeamScoreChanged;
+        EventService.TeamProgressChanged += HandleTeamProgressChanged;
+        await LoadProjection();
+    }
+
+    private string GetPhaseLabel() => gameState?.Phase switch
+    {
+        GamePhase.IN_PROGRESS => "La partie est lancée",
+        GamePhase.PAUSED => "Partie en pause",
+        GamePhase.FINISHED => "Classement final",
+        GamePhase.READY => "Prêts à jouer",
+        _ => "En préparation"
+    };
+
+    private async Task LoadProjection()
+    {
+        var teams = await Data.Teams.GetAllAsync();
+        var steps = await Data.Steps.GetAllAsync();
+        var gameScores = await Data.GameScores.GetAllAsync();
+        gameState = await Data.GameStates.FindOneAsync(_ => true);
+        var stepsById = steps.ToDictionary(step => step.Id);
+
+        projectionTeams = teams
+            .Select(team =>
+            {
+                var route = team.RouteStepIds.Where(stepsById.ContainsKey).Select(stepId => stepsById[stepId]).ToList();
+                var completed = Math.Clamp(team.CurrentStep - 1, 0, route.Count);
+                var current = completed < route.Count ? route[completed] : null;
+                var status = route.Count == 0 ? "En attente du parcours" : current == null ? "Parcours terminé" : team.StartedAt == null ? "En attente du départ" : "En cours";
+                var teamScores = gameScores.Where(score => score.TeamId == team.Id).ToList();
+                return new ProjectionTeam
+                {
+                    Team = team,
+                    Route = route,
+                    Completed = completed,
+                    CurrentStep = current,
+                    ProgressPercent = route.Count == 0 ? 0 : (int)Math.Round(completed * 100d / route.Count),
+                    RawGameScores = teamScores.Select(score => new GameResult(
+                        stepsById.GetValueOrDefault(score.StepId)?.Name ?? "Jeu",
+                        score,
+                        teams.Count(participant => participant.RouteStepIds.Contains(score.StepId)
+                            && gameScores.All(otherScore => otherScore.TeamId != participant.Id || otherScore.StepId != score.StepId)))).ToList(),
+                    Status = status
+                };
+            })
+            .OrderByDescending(item => item.Team.TotalScore)
+            .ThenBy(item => item.Team.Name)
+            .ToList();
+
+        var previousScore = int.MinValue;
+        var previousRank = 0;
+        for (var index = 0; index < projectionTeams.Count; index++)
+        {
+            if (projectionTeams[index].Team.TotalScore != previousScore)
+            {
+                previousRank = index + 1;
+                previousScore = projectionTeams[index].Team.TotalScore;
+            }
+            projectionTeams[index].Rank = previousRank;
+        }
+    }
+
+    private async Task HandleChanged()
+    {
+        await LoadProjection();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private Task HandleTeamScoreChanged(string _) => HandleChanged();
+    private Task HandleTeamProgressChanged(string _) => HandleChanged();
+
+    public void Dispose()
+    {
+        EventService.TeamsChanged -= HandleChanged;
+        EventService.GameStateChanged -= HandleChanged;
+        EventService.TeamScoreChanged -= HandleTeamScoreChanged;
+        EventService.TeamProgressChanged -= HandleTeamProgressChanged;
+    }
+
+    private sealed class ProjectionTeam
+    {
+        public Team Team { get; init; } = new();
+        public List<Step> Route { get; init; } = new();
+        public int Completed { get; init; }
+        public Step? CurrentStep { get; init; }
+        public int ProgressPercent { get; init; }
+        public int Rank { get; set; }
+        public string Status { get; init; } = string.Empty;
+        public List<GameResult> RawGameScores { get; init; } = new();
+    }
+
+    private sealed record GameResult(string StepName, GameScore Score, int RemainingTeams);
+}

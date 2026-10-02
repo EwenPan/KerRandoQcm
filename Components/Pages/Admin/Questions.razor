@@ -1,0 +1,406 @@
+@page "/admin/questions"
+@attribute [Authorize]
+@rendermode InteractiveServer
+@inject IGameDataStore Data
+@inject ImageProcessingService ImageService
+@inject IJSRuntime JS
+
+<PageTitle>Éditeur de questions - KerRando QCM</PageTitle>
+
+<div class="admin-container">
+    <header class="admin-header">
+        <div>
+            <h1 class="admin-title">Éditeur de questions</h1>
+            <p class="admin-subtitle">Gestion des stations et des questionnaires à choix multiples</p>
+        </div>
+        <div class="admin-header-actions">
+            <a href="/admin" class="btn-outline-danger">Retour au tableau de bord</a>
+        </div>
+    </header>
+
+        <!-- Stations -->
+        <section class="admin-card">
+            <div class="card-header">
+                <h2>Stations</h2>
+            </div>
+
+            <div class="add-group-form">
+                <input type="text" @bind="newStationName" placeholder="Nom de la station" class="form-control" />
+                <select @bind="newStationType" class="select-control">
+                    <option value="@StationType.VILLAGE">Village</option>
+                    <option value="@StationType.SALLE">Salle</option>
+                </select>
+                <button class="btn-primary" @onclick="AddStation">Ajouter</button>
+            </div>
+
+            @if (!string.IsNullOrEmpty(errorMessage))
+            {
+                <div class="alert alert-danger mt-3">@errorMessage</div>
+            }
+
+            <div class="table-responsive mt-3">
+                <table class="admin-table">
+                    <thead>
+                        <tr>
+                            <th>Station</th>
+                            <th>Type</th>
+                            <th>Code court</th>
+                            <th>Questions</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @if (stations.Count == 0)
+                        {
+                            <tr>
+                                <td colspan="5" class="text-center text-muted">Aucune station créée pour le moment.</td>
+                            </tr>
+                        }
+                        @foreach (var station in stations)
+                        {
+                            <tr class="@(station.Id == selectedStationId ? "row-selected" : "")">
+                                <td><strong>@station.Name</strong></td>
+                                <td>@(station.Type == StationType.VILLAGE ? "Village" : "Salle")</td>
+                                <td>@station.ShortCode</td>
+                                <td>@questionCounts.GetValueOrDefault(station.Id, 0)</td>
+                                <td>
+                                    <button class="btn-primary" @onclick="() => SelectStation(station.Id)">Gérer les questions</button>
+                                    <button class="btn-icon-danger" @onclick="() => DeleteStation(station.Id)" title="Supprimer">Supprimer</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <!-- Questions de la station sélectionnée -->
+        @if (selectedStation != null)
+        {
+            <section class="admin-card">
+                <div class="card-header">
+                    <h2>Questions — @selectedStation.Name</h2>
+                    <button class="btn-accent" @onclick="StartNewQuestion">+ Nouvelle question</button>
+                </div>
+
+                <div class="table-responsive">
+                    <table class="admin-table">
+                        <thead>
+                            <tr>
+                                <th>Énoncé</th>
+                                <th>Média</th>
+                                <th>Bonne réponse</th>
+                                <th>Points</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @if (questions.Count == 0)
+                            {
+                                <tr>
+                                    <td colspan="5" class="text-center text-muted">Aucune question pour cette station.</td>
+                                </tr>
+                            }
+                            @foreach (var question in questions)
+                            {
+                                <tr>
+                                    <td>@question.Title</td>
+                                    <td>@(question.MediaType == MediaType.IMAGE ? "Image" : "Aucun")</td>
+                                    <td>@question.CorrectAnswer</td>
+                                    <td>@question.Points</td>
+                                    <td>
+                                        <button class="btn-primary" @onclick="() => StartEditQuestion(question)">Modifier</button>
+                                        <button class="btn-icon-danger" @onclick="() => DeleteQuestion(question.Id)" title="Supprimer">Supprimer</button>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+
+                @if (editingQuestion != null)
+                {
+                    <div class="question-editor-form mt-3">
+                        <h3>@(isNewQuestion ? "Nouvelle question" : "Modifier la question")</h3>
+
+                        @if (!string.IsNullOrEmpty(questionFormError))
+                        {
+                            <div class="alert alert-danger">@questionFormError</div>
+                        }
+
+                        <div class="form-field">
+                            <label class="form-label">Énoncé <span class="required">*</span></label>
+                            <input type="text" @bind="editingQuestion.Title" class="form-control" placeholder="Ex: Quel bâtiment se trouve devant vous ?" />
+                        </div>
+
+                        <div class="form-field">
+                            <label class="form-label">Média</label>
+                            <select @bind="editingQuestion.MediaType" class="select-control">
+                                <option value="@MediaType.NONE">Aucun</option>
+                                <option value="@MediaType.IMAGE">Photo</option>
+                            </select>
+                        </div>
+
+                        @if (editingQuestion.MediaType == MediaType.IMAGE)
+                        {
+                            <div class="form-field">
+                                <label class="form-label">Photo (redimensionnée automatiquement à 1200px max)</label>
+                                <InputFile OnChange="HandlePhotoSelected" accept="image/*" />
+                                @if (isProcessingImage)
+                                {
+                                    <p class="form-help">Traitement de l'image en cours...</p>
+                                }
+                                @if (!string.IsNullOrEmpty(editingQuestion.ImageData))
+                                {
+                                    <div class="qr-image mt-2">
+                                        <img src="@editingQuestion.ImageData" alt="Aperçu" style="max-width: 300px; border-radius: 8px;" />
+                                    </div>
+                                }
+                            </div>
+                        }
+
+                        <div class="admin-two-cols">
+                            <div class="form-field">
+                                <label class="form-label">Réponse A <span class="required">*</span></label>
+                                <input type="text" @bind="editingQuestion.OptionA" class="form-control" />
+                            </div>
+                            <div class="form-field">
+                                <label class="form-label">Réponse B <span class="required">*</span></label>
+                                <input type="text" @bind="editingQuestion.OptionB" class="form-control" />
+                            </div>
+                            <div class="form-field">
+                                <label class="form-label">Réponse C <span class="required">*</span></label>
+                                <input type="text" @bind="editingQuestion.OptionC" class="form-control" />
+                            </div>
+                            <div class="form-field">
+                                <label class="form-label">Réponse D <span class="required">*</span></label>
+                                <input type="text" @bind="editingQuestion.OptionD" class="form-control" />
+                            </div>
+                        </div>
+
+                        <div class="admin-two-cols">
+                            <div class="form-field">
+                                <label class="form-label">Bonne réponse</label>
+                                <select @bind="editingQuestion.CorrectAnswer" class="select-control">
+                                    <option value="@Choice.A">A</option>
+                                    <option value="@Choice.B">B</option>
+                                    <option value="@Choice.C">C</option>
+                                    <option value="@Choice.D">D</option>
+                                </select>
+                            </div>
+                            <div class="form-field">
+                                <label class="form-label">Points</label>
+                                <input type="number" @bind="editingQuestion.Points" class="form-control" min="0" />
+                            </div>
+                        </div>
+
+                        <div class="admin-header-actions mt-3">
+                            <button class="btn-primary" @onclick="SaveQuestion" disabled="@isProcessingImage">Enregistrer</button>
+                            <button class="btn-text-muted" @onclick="CancelEditQuestion">Annuler</button>
+                        </div>
+                    </div>
+                }
+            </section>
+        }
+    </div>
+
+@code {
+    private string? errorMessage;
+
+    private List<Station> stations = new();
+    private Dictionary<string, int> questionCounts = new();
+    private string? selectedStationId;
+    private Station? selectedStation;
+    private List<Question> questions = new();
+
+    private string newStationName = string.Empty;
+    private StationType newStationType = StationType.VILLAGE;
+
+    private Question? editingQuestion;
+    private bool isNewQuestion;
+    private bool isProcessingImage;
+    private string? questionFormError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadStations();
+    }
+
+    private async Task LoadStations()
+    {
+        stations = await Data.Stations.GetAllAsync();
+        questionCounts.Clear();
+        foreach (var station in stations)
+        {
+            questionCounts[station.Id] = (await Data.Questions.FindAsync(q => q.StationId == station.Id)).Count;
+        }
+    }
+
+    private async Task AddStation()
+    {
+        if (string.IsNullOrWhiteSpace(newStationName))
+        {
+            errorMessage = "Veuillez saisir un nom de station.";
+            return;
+        }
+
+        errorMessage = null;
+        var station = new Station
+        {
+            Name = newStationName.Trim(),
+            Type = newStationType,
+            ShortCode = GenerateShortCode()
+        };
+
+        await Data.Stations.InsertOneAsync(station);
+        newStationName = string.Empty;
+        await LoadStations();
+    }
+
+    private static string GenerateShortCode() =>
+        Guid.NewGuid().ToString("N")[..6].ToUpperInvariant();
+
+    private async Task DeleteStation(string stationId)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Supprimer cette station et toutes ses questions ?")) return;
+
+        await Data.Stations.DeleteOneAsync(s => s.Id == stationId);
+        var stationQuestions = await Data.Questions.FindAsync(q => q.StationId == stationId);
+        foreach (var question in stationQuestions)
+        {
+            await Data.Questions.DeleteOneAsync(q => q.Id == question.Id);
+        }
+
+        if (selectedStationId == stationId)
+        {
+            selectedStationId = null;
+            selectedStation = null;
+            questions.Clear();
+        }
+
+        await LoadStations();
+    }
+
+    private async Task SelectStation(string stationId)
+    {
+        selectedStationId = stationId;
+        selectedStation = stations.FirstOrDefault(s => s.Id == stationId);
+        editingQuestion = null;
+        questions = await Data.Questions.FindAsync(q => q.StationId == stationId);
+    }
+
+    private void StartNewQuestion()
+    {
+        isNewQuestion = true;
+        questionFormError = null;
+        editingQuestion = new Question
+        {
+            StationId = selectedStationId ?? string.Empty,
+            Points = 10
+        };
+    }
+
+    private void StartEditQuestion(Question question)
+    {
+        isNewQuestion = false;
+        questionFormError = null;
+        editingQuestion = new Question
+        {
+            Id = question.Id,
+            StationId = question.StationId,
+            Title = question.Title,
+            MediaType = question.MediaType,
+            MediaUrl = question.MediaUrl,
+            ImageData = question.ImageData,
+            OptionA = question.OptionA,
+            OptionB = question.OptionB,
+            OptionC = question.OptionC,
+            OptionD = question.OptionD,
+            CorrectAnswer = question.CorrectAnswer,
+            Points = question.Points
+        };
+    }
+
+    private void CancelEditQuestion()
+    {
+        editingQuestion = null;
+        questionFormError = null;
+    }
+
+    private async Task HandlePhotoSelected(InputFileChangeEventArgs e)
+    {
+        if (editingQuestion == null) return;
+
+        isProcessingImage = true;
+        try
+        {
+            const long maxFileSize = 10 * 1024 * 1024; // 10 Mo
+            await using var stream = e.File.OpenReadStream(maxFileSize);
+            editingQuestion.ImageData = await ImageService.ResizeToDataUriAsync(stream);
+        }
+        catch (Exception ex)
+        {
+            questionFormError = $"Erreur lors du traitement de la photo : {ex.Message}";
+        }
+        finally
+        {
+            isProcessingImage = false;
+        }
+    }
+
+    private async Task SaveQuestion()
+    {
+        if (editingQuestion == null || string.IsNullOrEmpty(selectedStationId)) return;
+
+        if (string.IsNullOrWhiteSpace(editingQuestion.Title) ||
+            string.IsNullOrWhiteSpace(editingQuestion.OptionA) ||
+            string.IsNullOrWhiteSpace(editingQuestion.OptionB) ||
+            string.IsNullOrWhiteSpace(editingQuestion.OptionC) ||
+            string.IsNullOrWhiteSpace(editingQuestion.OptionD))
+        {
+            questionFormError = "Veuillez renseigner l'énoncé et les 4 réponses.";
+            return;
+        }
+
+        editingQuestion.StationId = selectedStationId;
+
+        if (isNewQuestion)
+        {
+            await Data.Questions.InsertOneAsync(editingQuestion);
+        }
+        else
+        {
+            var id = editingQuestion.Id;
+            var updated = editingQuestion;
+            await Data.Questions.UpdateOneAsync(q => q.Id == id, q =>
+            {
+                q.Title = updated.Title;
+                q.MediaType = updated.MediaType;
+                q.MediaUrl = updated.MediaUrl;
+                q.ImageData = updated.ImageData;
+                q.OptionA = updated.OptionA;
+                q.OptionB = updated.OptionB;
+                q.OptionC = updated.OptionC;
+                q.OptionD = updated.OptionD;
+                q.CorrectAnswer = updated.CorrectAnswer;
+                q.Points = updated.Points;
+            });
+        }
+
+        editingQuestion = null;
+        questions = await Data.Questions.FindAsync(q => q.StationId == selectedStationId);
+        questionCounts[selectedStationId] = questions.Count;
+    }
+
+    private async Task DeleteQuestion(string questionId)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm", "Supprimer cette question ?")) return;
+
+        await Data.Questions.DeleteOneAsync(q => q.Id == questionId);
+        if (!string.IsNullOrEmpty(selectedStationId))
+        {
+            questions = await Data.Questions.FindAsync(q => q.StationId == selectedStationId);
+            questionCounts[selectedStationId] = questions.Count;
+        }
+    }
+}

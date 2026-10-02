@@ -1,0 +1,99 @@
+@page "/inscription"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IGameDataStore Data
+@inject NavigationManager Nav
+@inject IJSRuntime JS
+@inject GameEventService EventService
+
+<PageTitle>Rejoindre une équipe - KerRando QCM</PageTitle>
+
+<div class="player-container">
+    <div class="player-card">
+        <div class="player-header">
+            <span class="player-badge">KerRando QCM</span>
+            <h1 class="player-title">Rejoindre une équipe</h1>
+            <p class="player-subtitle">Choisissez l'équipe indiquée par l'organisateur. Aucun nom n'est nécessaire.</p>
+        </div>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger" role="alert">@errorMessage</div>
+        }
+
+        @if (isLoading)
+        {
+            <p class="form-help">Chargement des équipes...</p>
+        }
+        else if (teams.Count == 0)
+        {
+            <div class="waiting-box">
+                <h2>Les équipes ne sont pas encore ouvertes</h2>
+                <p class="waiting-desc">L'organisateur va bientôt préparer les équipes.</p>
+            </div>
+        }
+        else
+        {
+            <div class="team-join-list">
+                @foreach (var team in teams)
+                {
+                    <button type="button" class="team-join-option" @onclick="() => JoinTeam(team)" disabled="@isJoining">
+                        <span class="team-join-color" style="background-color: @(team.Color ?? "#2563eb")"></span>
+                        <span class="team-join-copy"><strong>@team.Name</strong><small>Rejoindre cette équipe</small></span>
+                        <span class="team-join-arrow">-></span>
+                    </button>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<Team> teams = new();
+    private string? errorMessage;
+    private bool isLoading = true;
+    private bool isJoining;
+
+    protected override async Task OnInitializedAsync()
+    {
+        EventService.TeamsChanged += HandleTeamsChanged;
+        await LoadTeams();
+    }
+
+    private async Task HandleTeamsChanged()
+    {
+        await LoadTeams();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadTeams()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            teams = (await Data.Teams.GetAllAsync()).OrderBy(team => team.Name).ToList();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = "Impossible de charger les équipes pour le moment.";
+            Console.WriteLine(ex.Message);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task JoinTeam(Team selectedTeam)
+    {
+        isJoining = true;
+        await JS.InvokeVoidAsync("kerrandoSession.setTeamId", selectedTeam.Id);
+        Nav.NavigateTo($"/attente/{selectedTeam.Id}");
+    }
+
+    public void Dispose()
+    {
+        EventService.TeamsChanged -= HandleTeamsChanged;
+    }
+}

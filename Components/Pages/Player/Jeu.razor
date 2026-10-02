@@ -1,0 +1,418 @@
+@page "/jeu/{TeamId}"
+@rendermode InteractiveServer
+@implements IDisposable
+@inject IGameDataStore Data
+@inject GamePlayService GamePlay
+@inject GameEventService EventService
+@inject IJSRuntime JS
+@inject NavigationManager Nav
+
+<PageTitle>Ma progression - KerRando QCM</PageTitle>
+
+<main class="game-page">
+    @if (isLoading)
+    {
+        <div class="game-shell game-loading"><p>Chargement de votre parcours...</p></div>
+    }
+    else if (team == null)
+    {
+        <div class="game-shell game-empty">
+            <span class="game-kicker">KerRando</span>
+            <h1>Équipe introuvable</h1>
+            <p>Retournez à l'inscription pour rejoindre une équipe.</p>
+            <a href="/inscription" class="btn-senior-submit">Retour à l'inscription</a>
+        </div>
+    }
+    else if (!deviceAllowed)
+    {
+        <div class="game-shell game-empty">
+            <span class="game-kicker">Appareil non autorisé</span>
+            <h1>Cette équipe utilise déjà deux téléphones</h1>
+            <p>Demandez à l'organisateur de réinitialiser un appareil avant de continuer.</p>
+            <a href="/inscription" class="btn-senior-submit">Choisir une équipe</a>
+        </div>
+    }
+    else
+    {
+        <div class="game-shell">
+            <header class="game-header">
+                <div>
+                    <span class="game-kicker">Parcours en cours</span>
+                    <h1>@team.Name</h1>
+                </div>
+                <div class="game-score" aria-label="Score actuel"><strong>@team.TotalScore</strong><span>points</span></div>
+            </header>
+
+            <section class="game-progress" aria-label="Progression du parcours">
+                <div class="game-progress-labels"><span>@completedCount étape(s) terminée(s)</span><strong>@completedCount / @route.Count</strong></div>
+                <div class="game-progress-track"><div class="game-progress-value" style="width: @(progressPercent)%"></div></div>
+            </section>
+
+            @if (team.RevealedCharacters.Count > 0 && currentStep != null)
+            {
+                <section class="revealed-word" aria-label="Caractères découverts">
+                    <span>Votre indice</span>
+                    <strong>@GetRevealedCharacters()</strong>
+                </section>
+            }
+
+            @if (gameState?.Phase != GamePhase.IN_PROGRESS)
+            {
+                <div class="alert alert-info game-state-notice">@GetGameStateMessage()</div>
+            }
+
+            @if (currentStep == null)
+            {
+                <section class="game-complete">
+                    <span class="game-complete-mark">✓</span>
+                    <h2>Parcours terminé</h2>
+                    @if (route.Count > 0)
+                    {
+                        <p>Rassemblez les lettres découvertes et trouvez le mot final.</p>
+                        <strong class="final-word-letters">@GetRevealedCharacters()</strong>
+                        @if (team.FinalWordAccepted == true)
+                        {
+                            <div class="game-result game-result-good"><strong>Bravo, votre équipe a trouvé le mot final !</strong></div>
+                        }
+                        else
+                        {
+                            <label class="form-label" for="finalWordAnswer">Votre proposition</label>
+                            <input id="finalWordAnswer" @bind="finalWordInput" class="form-control" autocomplete="off" />
+                            <button type="button" class="btn-senior-submit game-submit" @onclick="SubmitFinalWord" disabled="@(isSubmitting || string.IsNullOrWhiteSpace(finalWordInput) || gameState?.Phase != GamePhase.IN_PROGRESS)">Valider le mot</button>
+                            @if (!string.IsNullOrWhiteSpace(finalWordMessage))
+                            {
+                                <p class="final-word-message">@finalWordMessage</p>
+                            }
+                        }
+                    }
+                    else
+                    {
+                        <p>Votre équipe a terminé toutes les étapes du parcours.</p>
+                    }
+                </section>
+            }
+            else if (team.IsBetweenSteps)
+            {
+                <section class="game-transition-card">
+                    <span class="game-kicker">Étape @(completedCount) terminée</span>
+                    <h2>En route pour la suite</h2>
+                    <p class="game-transition-hint">@gameState?.TransitionHint</p>
+                    @if (!string.IsNullOrWhiteSpace(gameState?.TransitionImageData))
+                    {
+                        <img src="@gameState.TransitionImageData" alt="Carte de l'étape suivante" class="game-transition-image" />
+                    }
+                    <div class="game-destination game-next-destination">
+                        <span class="game-location-icon">⌖</span>
+                        <div><small>Prochaine étape</small><strong>@currentStep.Name · @currentStep.Destination</strong></div>
+                    </div>
+                    <button type="button" class="btn-senior-submit game-submit" @onclick="ContinueToNextStep" disabled="@(isSubmitting || gameState?.Phase != GamePhase.IN_PROGRESS)">Continuer</button>
+                </section>
+            }
+            else
+            {
+                <section class="game-step-card">
+                    <div class="game-step-meta"><span>Étape @(completedCount + 1)</span><span class="game-type-pill">@(currentStep.Type == StepType.QCM ? "Question" : "Jeu")</span></div>
+                    <h2>@currentStep.Name</h2>
+                    <div class="game-destination"><span class="game-location-icon">⌖</span><div><small>Destination</small><strong>@currentStep.Destination</strong></div></div>
+                    <p class="game-instructions">@currentStep.Instructions</p>
+
+                    @if (currentStep.Type == StepType.QCM && question != null)
+                    {
+                        <div class="game-question">
+                            <h3>@question.Title</h3>
+                            @if (!string.IsNullOrEmpty(question.ImageData))
+                            {
+                                <button type="button" class="image-zoom-trigger" @onclick='() => OpenImage(question.ImageData, "Illustration de la question")' aria-label="Agrandir l'illustration de la question">
+                                    <img src="@question.ImageData" alt="Illustration de la question" class="game-question-image" />
+                                </button>
+                            }
+                            <div class="game-choices">
+                                @foreach (var choice in choices)
+                                {
+                                    <button type="button" class="game-choice @(selectedChoice == choice.Key ? "selected" : "")" @onclick="() => selectedChoice = choice.Key">
+                                        <span class="choice-letter">@choice.Key</span>
+                                        <span class="choice-content">
+                                            @if (question.AnswerType == AnswerContentType.IMAGE)
+                                            {
+                                                <img src="@choice.Value.Content" alt="Réponse @choice.Key" class="game-choice-image" @onclick='() => OpenImage(choice.Value.Content, $"Réponse {choice.Key}")' @onclick:stopPropagation="true" />
+                                            }
+                                            else if (question.AnswerType == AnswerContentType.AUDIO)
+                                            {
+                                                <audio controls src="@choice.Value.Content">Réponse audio</audio>
+                                            }
+                                            else
+                                            {
+                                                @choice.Value.Content
+                                            }
+                                        </span>
+                                    </button>
+                                }
+                            </div>
+                            <button type="button" class="btn-senior-submit game-submit" @onclick="SubmitAnswer" disabled="@(selectedChoice == null || isSubmitting || gameState?.Phase != GamePhase.IN_PROGRESS)">
+                                @(isSubmitting ? "Validation..." : "Valider ma réponse")
+                            </button>
+                        </div>
+                    }
+                    else if (currentStep.Type == StepType.GAME)
+                    {
+                        var gameStep = (GameStep)currentStep;
+                        <div class="game-coming-soon">
+                            <strong>Jeu à réaliser sur place</strong>
+                            <p>Présentez-vous à la destination, puis suivez les consignes de l'organisateur.</p>
+                            <span>Barème : @gameStep.MinPoints à @gameStep.MaxPoints points</span>
+                            <label class="form-label game-score-label" for="gameScore">Score obtenu</label>
+                            <input id="gameScore" type="number" min="@gameStep.MinPoints" max="@gameStep.MaxPoints" step="1" @bind="gameScoreInput" class="form-control" />
+                            <button type="button" class="btn-senior-submit game-submit" @onclick="SubmitGameScore" disabled="@(isSubmitting || gameState?.Phase != GamePhase.IN_PROGRESS)">Valider le score</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="alert alert-danger">Cette étape n'est pas configurée correctement.</div>
+                    }
+                </section>
+            }
+
+            @if (submissionMessage != null)
+            {
+                <div class="game-result @(submissionCorrect ? "game-result-good" : "game-result-neutral")">
+                    <strong>@submissionMessage</strong>
+                    @if (lastPoints > 0) { <span>+@lastPoints point(s)</span> }
+                </div>
+            }
+
+            @if (gameCompletionMessage != null)
+            {
+                <div class="game-result game-result-good"><strong>@gameCompletionMessage</strong></div>
+            }
+
+            <a href="/attente/@team.Id" class="game-back-link">Retour à l'équipe</a>
+        </div>
+    }
+
+    @if (enlargedImage != null)
+    {
+        <div class="image-viewer" role="dialog" aria-modal="true" aria-label="@enlargedImageAlt" @onclick="CloseImage">
+            <div class="image-viewer-content" @onclick:stopPropagation="true">
+                <button type="button" class="image-viewer-close" @onclick="CloseImage" aria-label="Fermer l'image">×</button>
+                <img src="@enlargedImage" alt="@enlargedImageAlt" class="image-viewer-image" />
+            </div>
+        </div>
+    }
+</main>
+
+@code {
+    [Parameter] public string TeamId { get; set; } = string.Empty;
+
+    private Team? team;
+    private List<Step> route = new();
+    private Step? currentStep;
+    private Question? question;
+    private readonly Dictionary<Choice, AnswerOption> choices = new();
+    private Choice? selectedChoice;
+    private string? deviceToken;
+    private string? submissionMessage;
+    private string? gameCompletionMessage;
+    private string? enlargedImage;
+    private string enlargedImageAlt = string.Empty;
+    private int gameScoreInput;
+    private string finalWordInput = string.Empty;
+    private string? finalWordMessage;
+    private GameState? gameState;
+    private bool submissionCorrect;
+    private int lastPoints;
+    private bool deviceAllowed;
+    private bool isLoading = true;
+    private bool isSubmitting;
+
+    private void OpenImage(string? image, string alt)
+    {
+        if (string.IsNullOrWhiteSpace(image)) return;
+        enlargedImage = image;
+        enlargedImageAlt = alt;
+    }
+
+    private void CloseImage()
+    {
+        enlargedImage = null;
+        enlargedImageAlt = string.Empty;
+    }
+
+    private string GetGameStateMessage() => gameState?.Phase switch
+    {
+        GamePhase.PAUSED => "Le rallye est en pause. Vous pourrez reprendre quand l'organisateur le relancera.",
+        GamePhase.FINISHED => "Le rallye est terminé.",
+        _ => "Le rallye n'a pas encore commencé. L'organisateur le lancera bientôt."
+    };
+
+    private int completedCount => team == null ? 0 : Math.Clamp(team.CurrentStep - 1, 0, route.Count);
+    private int progressPercent => route.Count == 0 ? 0 : (int)Math.Round(completedCount * 100d / route.Count);
+
+    protected override async Task OnInitializedAsync()
+    {
+        EventService.TeamProgressChanged += HandleProgressChanged;
+        EventService.GameStateChanged += HandleGameStateChanged;
+        team = await Data.Teams.FindOneAsync(t => t.Id == TeamId);
+        gameState = await Data.GameStates.FindOneAsync(_ => true);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        if (team == null)
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        deviceToken = await JS.InvokeAsync<string?>("kerrandoSession.getDeviceToken");
+        var registration = await GamePlay.RegisterDeviceAsync(team.Id, deviceToken);
+        deviceAllowed = registration.Allowed;
+        if (deviceAllowed && registration.IsNew)
+        {
+            deviceToken = registration.Token;
+            await JS.InvokeVoidAsync("kerrandoSession.setDeviceToken", deviceToken);
+        }
+        await LoadCurrentStep();
+        isLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task LoadCurrentStep()
+    {
+        if (team == null) return;
+        team = await Data.Teams.FindOneAsync(t => t.Id == team.Id);
+        if (team == null) return;
+        route = await GamePlay.GetTeamRouteAsync(team);
+        currentStep = completedCount < route.Count ? route[completedCount] : null;
+        question = null;
+        choices.Clear();
+        selectedChoice = null;
+        if (currentStep is GameStep gameStep)
+        {
+            gameScoreInput = gameStep.MinPoints;
+        }
+        if (currentStep is QcmStep qcmStep && qcmStep.QuestionId is string questionId)
+        {
+            question = await Data.Questions.FindOneAsync(q => q.Id == questionId);
+            if (question != null)
+            {
+                var options = question.Options.Count > 0
+                    ? question.Options
+                    : new List<AnswerOption>
+                    {
+                        new() { Choice = Choice.A, Content = question.OptionA },
+                        new() { Choice = Choice.B, Content = question.OptionB },
+                        new() { Choice = Choice.C, Content = question.OptionC },
+                        new() { Choice = Choice.D, Content = question.OptionD }
+                    };
+                foreach (var option in options.Where(option => !string.IsNullOrWhiteSpace(option.Content)))
+                {
+                    choices[option.Choice] = option;
+                }
+            }
+        }
+    }
+
+    private async Task SubmitAnswer()
+    {
+        if (team == null || currentStep == null || question == null || selectedChoice == null || deviceToken == null) return;
+        if (!await JS.InvokeAsync<bool>("confirm", "Valider définitivement cette réponse ?")) return;
+
+        isSubmitting = true;
+        var result = await GamePlay.SubmitQcmAsync(team.Id, deviceToken, currentStep, question, selectedChoice.Value);
+        submissionMessage = result.Message;
+        submissionCorrect = result.IsCorrect;
+        lastPoints = result.PointsEarned;
+        if (result.Accepted)
+        {
+            await EventService.NotifyTeamProgressChangedAsync(team.Id);
+            await EventService.NotifyTeamsChangedAsync();
+            await EventService.NotifyTeamScoreChangedAsync(team.Id);
+            await LoadCurrentStep();
+        }
+        isSubmitting = false;
+    }
+
+    private async Task SubmitGameScore()
+    {
+        if (team == null || currentStep is not GameStep || deviceToken == null) return;
+        if (!await JS.InvokeAsync<bool>("confirm", "Valider définitivement ce score ?")) return;
+
+        isSubmitting = true;
+        var result = await GamePlay.SubmitGameScoreAsync(team.Id, deviceToken, (GameStep)currentStep, gameScoreInput);
+        if (result.Accepted)
+        {
+            gameCompletionMessage = result.Message;
+            await EventService.NotifyTeamProgressChangedAsync(team.Id);
+            await EventService.NotifyTeamsChangedAsync();
+            await EventService.NotifyTeamScoreChangedAsync(team.Id);
+            await LoadCurrentStep();
+        }
+        else
+        {
+            gameCompletionMessage = result.Message;
+        }
+        isSubmitting = false;
+    }
+
+    private async Task ContinueToNextStep()
+    {
+        if (team == null || deviceToken == null) return;
+        isSubmitting = true;
+        var result = await GamePlay.ContinueToNextStepAsync(team.Id, deviceToken);
+        submissionMessage = result.Message;
+        submissionCorrect = result.Accepted;
+        if (result.Accepted)
+        {
+            await EventService.NotifyTeamProgressChangedAsync(team.Id);
+            await LoadCurrentStep();
+        }
+        else
+        {
+        }
+        isSubmitting = false;
+    }
+
+    private async Task SubmitFinalWord()
+    {
+        if (team == null || deviceToken == null) return;
+        isSubmitting = true;
+        var result = await GamePlay.SubmitFinalWordAsync(team.Id, deviceToken, finalWordInput);
+        finalWordMessage = result.Message;
+        if (result.Submitted)
+        {
+            await LoadCurrentStep();
+            await EventService.NotifyTeamProgressChangedAsync(team.Id);
+        }
+        isSubmitting = false;
+    }
+
+    private async Task HandleProgressChanged(string teamId)
+    {
+        if (team?.Id != teamId) return;
+        await LoadCurrentStep();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private string GetRevealedCharacters()
+    {
+        if (team == null) return string.Empty;
+        var lastPosition = team.RevealedCharacters.Max(character => character.Position);
+        var revealedByPosition = team.RevealedCharacters.ToDictionary(character => character.Position, character => character.Character);
+        return string.Join(" ", Enumerable.Range(1, lastPosition)
+            .Select(position => revealedByPosition.GetValueOrDefault(position, "_")));
+    }
+
+    private async Task HandleGameStateChanged()
+    {
+        gameState = await Data.GameStates.FindOneAsync(_ => true);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        EventService.TeamProgressChanged -= HandleProgressChanged;
+        EventService.GameStateChanged -= HandleGameStateChanged;
+    }
+}

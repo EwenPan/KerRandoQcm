@@ -1,0 +1,28 @@
+@page "/code"
+@rendermode InteractiveServer
+@inject NavigationManager Nav
+
+<PageTitle>Accéder à une étape - KerRando QCM</PageTitle>
+
+<div class="player-container">
+    <div class="player-card">
+        <h1 class="player-title">Accéder à une étape</h1>
+        <p class="player-subtitle">Saisissez le code remis par l'organisateur.</p>
+        <label class="form-label" for="stepCode">Code de l'étape</label>
+        <input id="stepCode" type="text" maxlength="8" @bind="code" class="form-control text-uppercase" autocomplete="off" />
+        <button type="button" class="btn-senior-submit" @onclick="OpenStep" disabled="@string.IsNullOrWhiteSpace(code)">Continuer</button>
+    </div>
+</div>
+
+@code {
+    private string code = string.Empty;
+
+    private void OpenStep()
+    {
+        var normalizedCode = code.Trim().ToUpperInvariant();
+        if (normalizedCode.Length > 0)
+        {
+            Nav.NavigateTo($"/scan/{Uri.EscapeDataString(normalizedCode)}");
+        }
+    }
+}

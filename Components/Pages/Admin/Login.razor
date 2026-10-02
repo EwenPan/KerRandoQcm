@@ -1,0 +1,35 @@
+@page "/admin/login"
+
+<PageTitle>Connexion Administrateur - KerRando QCM</PageTitle>
+
+<div class="admin-auth-container">
+    <div class="auth-card">
+        <h1>Accès Administrateur</h1>
+        <p>Saisissez le mot de passe pour accéder au panneau de gestion.</p>
+
+        @if (HasError)
+        {
+            <div class="alert alert-danger">Mot de passe incorrect.</div>
+        }
+
+        <form method="post" action="/admin/authenticate" class="auth-form">
+            <input type="hidden" name="returnUrl" value="@ReturnUrl" />
+            <input type="password"
+                   name="password"
+                   placeholder="Mot de passe"
+                   class="form-control auth-input"
+                   autofocus />
+            <button type="submit" class="btn-primary-large">Connexion</button>
+        </form>
+    </div>
+</div>
+
+@code {
+    [SupplyParameterFromQuery]
+    public string? ReturnUrl { get; set; }
+
+    [SupplyParameterFromQuery]
+    public string? Error { get; set; }
+
+    private bool HasError => Error == "1";
+}
