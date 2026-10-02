@@ -33,6 +33,64 @@ body {
 }
 
 /* Page Layout */
+#components-reconnect-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    overflow: auto;
+    padding: 1.5rem;
+    background: #fff;
+    color: var(--text-main);
+}
+
+#components-reconnect-modal.components-reconnect-show,
+#components-reconnect-modal.components-reconnect-failed,
+#components-reconnect-modal.components-reconnect-rejected {
+    display: grid;
+    place-items: center;
+}
+
+.reconnect-content {
+    width: 100%;
+    max-width: 25rem;
+    text-align: center;
+}
+
+.reconnect-content h1 {
+    font-size: 1.75rem;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.reconnect-content p {
+    margin: 0.75rem 0 1.75rem;
+    color: var(--text-muted);
+}
+
+.reconnect-refresh {
+    width: 100%;
+    min-height: 4rem;
+    padding: 1rem;
+    border: 0;
+    border-radius: var(--radius-sm);
+    background: var(--primary-dark);
+    color: #fff;
+    font: inherit;
+    font-size: 1.35rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.reconnect-refresh:hover {
+    background: var(--primary-hover);
+}
+
+.reconnect-refresh:focus-visible {
+    outline: 3px solid var(--secondary);
+    outline-offset: 4px;
+}
+
 .page-wrapper {
     min-height: 100vh;
     display: flex;

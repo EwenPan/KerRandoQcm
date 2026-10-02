@@ -14,6 +14,13 @@
 
 <body>
     <Routes />
+    <div id="components-reconnect-modal" class="components-reconnect-hide" role="alertdialog" aria-modal="true" aria-labelledby="reconnect-title" aria-describedby="reconnect-message">
+        <div class="reconnect-content">
+            <h1 id="reconnect-title">Connexion interrompue</h1>
+            <p id="reconnect-message">Impossible de joindre le serveur.</p>
+            <button type="button" class="reconnect-refresh" onclick="window.location.reload()">Actualiser</button>
+        </div>
+    </div>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
     <script src="js/session.js"></script>
     <script src="js/qr-scanner.js"></script>
