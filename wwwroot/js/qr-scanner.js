@@ -9,6 +9,8 @@ window.kerRandoQrScanner = (() => {
 
             const scanner = new window.Html5Qrcode(elementId);
             let handled = false;
+            let lastDecodedText;
+            let retryAfter = 0;
             scanners.set(elementId, scanner);
 
             try {
@@ -16,14 +18,15 @@ window.kerRandoQrScanner = (() => {
                     { facingMode: "environment" },
                     { fps: 10, qrbox: 250, aspectRatio: 1 },
                     async decodedText => {
-                        if (handled) return;
+                        if (handled || (decodedText === lastDecodedText && Date.now() < retryAfter)) return;
                         handled = true;
+                        lastDecodedText = decodedText;
                         let accepted = false;
                         try {
                             accepted = await dotNetReference.invokeMethodAsync("OnQrDecoded", decodedText);
                         } finally {
                             if (!accepted) {
-                                await new Promise(resolve => setTimeout(resolve, 2000));
+                                retryAfter = Date.now() + 1500;
                                 handled = false;
                             }
                         }

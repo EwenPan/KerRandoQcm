@@ -113,6 +113,7 @@
     {
         if (isOpeningStep) return false;
         isOpeningStep = true;
+        errorMessage = null;
         await InvokeAsync(StateHasChanged);
 
         try
