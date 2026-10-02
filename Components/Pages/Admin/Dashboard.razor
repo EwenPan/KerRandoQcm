@@ -340,6 +340,7 @@
                 {
                     currentTeam.RouteStepIds = generatedRoutes[team.Id];
                     currentTeam.CurrentStep = 1;
+                    currentTeam.UnlockedStepId = null;
                     currentTeam.TotalScore = 0;
                     currentTeam.RevealedCharacters.Clear();
                     currentTeam.IsBetweenSteps = false;
@@ -580,6 +581,8 @@
                 {
                     currentTeam.RouteStepIds = generatedRoutes[team.Id];
                     currentTeam.CurrentStep = 1;
+                    currentTeam.UnlockedStepId = null;
+                    currentTeam.IsBetweenSteps = false;
                     currentTeam.TotalScore = 0;
                     currentTeam.UpdatedAt = DateTime.UtcNow;
                 });

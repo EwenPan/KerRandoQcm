@@ -31,6 +31,11 @@ public class Team : IEntity
     [BsonElement("is_between_steps")]
     public bool IsBetweenSteps { get; set; }
 
+    [BsonElement("unlocked_step_id")]
+    [BsonRepresentation(BsonType.ObjectId)]
+    [BsonIgnoreIfNull]
+    public string? UnlockedStepId { get; set; }
+
     [BsonElement("final_word_attempt")]
     public string FinalWordAttempt { get; set; } = string.Empty;
 

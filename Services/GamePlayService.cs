@@ -102,6 +102,10 @@ public class GamePlayService
             {
                 return new QcmSubmissionResult(false, false, 0, "Cette étape n'est pas l'étape attendue.");
             }
+            if (team.UnlockedStepId != step.Id)
+            {
+                return new QcmSubmissionResult(false, false, 0, "Scannez le QR code de cette étape ou saisissez son code de secours.");
+            }
 
             var existing = await _data.Submissions.FindOneAsync(s => s.TeamId == teamId && s.StepId == step.Id);
             if (existing != null)
@@ -126,6 +130,7 @@ public class GamePlayService
             {
                 t.CurrentStep = currentIndex + 2;
                 t.IsBetweenSteps = t.CurrentStep <= route.Count;
+                t.UnlockedStepId = null;
                 t.TotalScore += points;
                 t.StartedAt ??= DateTime.UtcNow;
                 if (t.CurrentStep > route.Count) t.FinishedAt = DateTime.UtcNow;
@@ -169,6 +174,10 @@ public class GamePlayService
             {
                 return new GameScoreResult(false, "Cette étape n'est pas l'étape Jeu attendue.");
             }
+            if (team.UnlockedStepId != step.Id)
+            {
+                return new GameScoreResult(false, "Scannez le QR code de cette étape ou saisissez son code de secours.");
+            }
 
             if (score < step.MinPoints || score > step.MaxPoints)
             {
@@ -199,6 +208,7 @@ public class GamePlayService
             {
                 t.CurrentStep = currentIndex + 2;
                 t.IsBetweenSteps = t.CurrentStep <= route.Count;
+                t.UnlockedStepId = null;
                 t.StartedAt ??= DateTime.UtcNow;
                 if (t.CurrentStep > route.Count) t.FinishedAt = DateTime.UtcNow;
                 t.UpdatedAt = DateTime.UtcNow;
@@ -227,34 +237,32 @@ public class GamePlayService
         });
     }
 
-    public async Task<GameActionResult> ContinueToNextStepAsync(string teamId, string token)
+    public async Task<GameActionResult> UnlockStepAsync(string teamId, string stepId)
     {
         if (!await IsGameInProgressAsync())
         {
             return new GameActionResult(false, "Le rallye n'est pas en cours.");
         }
-        if (!await IsAuthorizedDeviceAsync(teamId, token))
-        {
-            return new GameActionResult(false, "Cet appareil n'est pas autorisé pour cette équipe.");
-        }
 
         var team = await _data.Teams.FindOneAsync(currentTeam => currentTeam.Id == teamId);
-        if (team == null || !team.IsBetweenSteps)
+        if (team == null)
         {
-            return new GameActionResult(false, "Aucune étape suivante n'attend votre équipe.");
+            return new GameActionResult(false, "Équipe introuvable.");
         }
         var route = await GetTeamRouteAsync(team);
-        if (team.CurrentStep <= 1 || team.CurrentStep > route.Count)
+        var currentIndex = team.CurrentStep - 1;
+        if (currentIndex < 0 || currentIndex >= route.Count || route[currentIndex].Id != stepId)
         {
-            return new GameActionResult(false, "Aucune étape suivante n'attend votre équipe.");
+            return new GameActionResult(false, "Ce n'est pas l'étape attendue pour votre équipe.");
         }
 
         await _data.Teams.UpdateOneAsync(currentTeam => currentTeam.Id == teamId, currentTeam =>
         {
+            currentTeam.UnlockedStepId = stepId;
             currentTeam.IsBetweenSteps = false;
             currentTeam.UpdatedAt = DateTime.UtcNow;
         });
-        return new GameActionResult(true, "Vous pouvez continuer vers l'étape suivante.");
+        return new GameActionResult(true, "Étape déverrouillée.");
     }
 
     public async Task<FinalWordResult> SubmitFinalWordAsync(string teamId, string token, string answer)

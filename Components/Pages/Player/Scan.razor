@@ -1,67 +1,179 @@
+@page "/scanner"
 @page "/scan/{StepToken}"
 @rendermode InteractiveServer
+@implements IAsyncDisposable
 @inject IGameDataStore Data
+@inject GamePlayService GamePlay
+@inject GameEventService EventService
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@using Microsoft.JSInterop
 
-<PageTitle>Accès à l'étape - KerRando QCM</PageTitle>
+<PageTitle>Scanner une étape - KerRando QCM</PageTitle>
 
 <div class="player-container">
     <div class="player-card text-center">
         @if (isLoading)
         {
-            <p>Vérification de l'étape...</p>
+            <p>Préparation du scanner...</p>
         }
-        else if (!string.IsNullOrWhiteSpace(errorMessage))
+        else if (!hasTeam)
         {
-            <h1 class="player-title">Étape indisponible</h1>
+            <h1 class="player-title">Aucune équipe sélectionnée</h1>
             <p class="player-subtitle">@errorMessage</p>
             <a href="/inscription" class="btn-senior-submit">Choisir une équipe</a>
         }
+        else if (!string.IsNullOrWhiteSpace(StepToken))
+        {
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <h1 class="player-title">Étape indisponible</h1>
+                <p class="player-subtitle">@errorMessage</p>
+                <a href="/code" class="btn-senior-submit">Réessayer avec un code</a>
+            }
+            else
+            {
+                <p>Ouverture de l'étape...</p>
+            }
+        }
         else
         {
-            <p>Ouverture de l'étape...</p>
+            <h1 class="player-title">Scanner le QR code de l'étape</h1>
+            <p class="player-subtitle">Autorisez l'accès à la caméra, puis présentez le QR code dans le cadre.</p>
+            <div id="qr-reader" class="qr-scanner-viewfinder" aria-label="Lecteur de QR code"></div>
+            @if (!string.IsNullOrWhiteSpace(errorMessage))
+            {
+                <div class="alert alert-danger" role="alert">@errorMessage</div>
+            }
+            <button type="button" class="btn-senior-submit" @onclick="StartScanner" disabled="@(isStartingScanner || isScanning || isOpeningStep)">
+                @(isStartingScanner ? "Ouverture de la caméra..." : isScanning ? "Caméra active" : "Activer la caméra")
+            </button>
+            <a href="/code" class="qr-scanner-code-link">Saisir le code de secours</a>
         }
     </div>
 </div>
 
 @code {
-    [Parameter] public string StepToken { get; set; } = string.Empty;
+    [Parameter] public string? StepToken { get; set; }
 
     private bool isLoading = true;
+    private bool hasTeam;
+    private bool isStartingScanner;
+    private bool isScanning;
+    private bool isOpeningStep;
     private string? errorMessage;
+    private DotNetObjectReference<Scan>? scannerReference;
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
         if (!firstRender) return;
 
         var teamId = await JS.InvokeAsync<string?>("kerrandoSession.getTeamId");
-        var shortCode = StepToken.Trim().ToUpperInvariant();
-        var step = await Data.Steps.FindOneAsync(currentStep =>
-            (currentStep.QrToken == StepToken || currentStep.ShortCode == shortCode) && currentStep.IsActive);
-        var team = string.IsNullOrWhiteSpace(teamId)
-            ? null
-            : await Data.Teams.FindOneAsync(currentTeam => currentTeam.Id == teamId);
+        hasTeam = !string.IsNullOrWhiteSpace(teamId)
+            && await Data.Teams.FindOneAsync(currentTeam => currentTeam.Id == teamId) != null;
 
-        if (step == null)
-        {
-            errorMessage = "Ce QR code n'est plus valide.";
-        }
-        else if (team == null)
+        if (!hasTeam)
         {
             errorMessage = "Choisissez d'abord une équipe depuis la page d'inscription.";
         }
-        else if (team.CurrentStep < 1 || team.CurrentStep > team.RouteStepIds.Count || team.RouteStepIds[team.CurrentStep - 1] != step.Id)
+        else if (!string.IsNullOrWhiteSpace(StepToken))
         {
-            errorMessage = "Ce n'est pas l'étape attendue pour votre équipe.";
-        }
-        else
-        {
-            Nav.NavigateTo($"/jeu/{team.Id}");
-            return;
+            await OpenStepAsync(StepToken);
         }
 
         isLoading = false;
         await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task StartScanner()
+    {
+        if (isStartingScanner || isScanning) return;
+        isStartingScanner = true;
+        errorMessage = null;
+
+        try
+        {
+            scannerReference ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("kerRandoQrScanner.start", "qr-reader", scannerReference);
+            isScanning = true;
+        }
+        catch (JSException)
+        {
+            errorMessage = "Impossible d'ouvrir la caméra. Autorisez son accès et vérifiez que le site est en HTTPS.";
+        }
+        finally
+        {
+            isStartingScanner = false;
+        }
+    }
+
+    [JSInvokable]
+    public async Task OnQrDecoded(string decodedText)
+    {
+        if (isOpeningStep) return;
+        isScanning = false;
+        isOpeningStep = true;
+        errorMessage = null;
+        await InvokeAsync(StateHasChanged);
+
+        await OpenStepAsync(decodedText);
+        isOpeningStep = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OpenStepAsync(string scannedValue)
+    {
+        var token = scannedValue.Trim();
+        if (Uri.TryCreate(token, UriKind.Absolute, out _))
+        {
+            errorMessage = "Ce QR code contient un lien. Utilisez un QR d'étape généré depuis l'administration.";
+            return;
+        }
+
+        var shortCode = token.ToUpperInvariant();
+        var step = await Data.Steps.FindOneAsync(currentStep =>
+            (currentStep.QrToken == token || currentStep.ShortCode == shortCode) && currentStep.IsActive);
+        if (step == null)
+        {
+            errorMessage = "QR code ou code de secours invalide.";
+            return;
+        }
+
+        var teamId = await JS.InvokeAsync<string?>("kerrandoSession.getTeamId");
+        var team = string.IsNullOrWhiteSpace(teamId)
+            ? null
+            : await Data.Teams.FindOneAsync(currentTeam => currentTeam.Id == teamId);
+        if (team == null)
+        {
+            hasTeam = false;
+            errorMessage = "Choisissez d'abord une équipe depuis la page d'inscription.";
+            return;
+        }
+
+        var unlockResult = await GamePlay.UnlockStepAsync(team.Id, step.Id);
+        if (!unlockResult.Accepted)
+        {
+            errorMessage = unlockResult.Message;
+            return;
+        }
+
+        await EventService.NotifyTeamProgressChangedAsync(team.Id);
+        Nav.NavigateTo($"/jeu/{team.Id}");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (isScanning)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("kerRandoQrScanner.stop", "qr-reader");
+            }
+            catch (JSDisconnectedException)
+            {
+            }
+        }
+
+        scannerReference?.Dispose();
     }
 }

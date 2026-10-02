@@ -91,24 +91,26 @@
                     }
                 </section>
             }
-            else if (team.IsBetweenSteps)
+            else if (team.IsBetweenSteps || team.UnlockedStepId != currentStep.Id)
             {
                 <section class="game-transition-card">
-                    <span class="game-kicker">Étape @(completedCount) terminée</span>
-                    <h2>En route pour la suite</h2>
-                    @if (!string.IsNullOrWhiteSpace(currentStep?.TransitionHint))
+                    <span class="game-kicker">@(team.IsBetweenSteps ? $"Étape {completedCount} terminée" : "Accès à l'étape")</span>
+                    <h2>@(team.IsBetweenSteps ? "En route pour la suite" : "Déverrouillez cette étape")</h2>
+                    @if (team.IsBetweenSteps && !string.IsNullOrWhiteSpace(currentStep.TransitionHint))
                     {
                         <p class="game-transition-hint">@currentStep.TransitionHint</p>
                     }
-                    @if (!string.IsNullOrWhiteSpace(gameState?.TransitionImageData))
+                    @if (team.IsBetweenSteps && gameState != null && !string.IsNullOrWhiteSpace(gameState.TransitionImageData))
                     {
                         <img src="@gameState.TransitionImageData" alt="Carte de l'étape suivante" class="game-transition-image" />
                     }
                     <div class="game-destination game-next-destination">
                         <span class="game-location-icon">⌖</span>
-                        <div><small>Prochaine étape</small><strong>@currentStep.Name · @currentStep.Destination</strong></div>
+                        <div><small>Prochaine étape</small><strong>@(currentStep?.Name)</strong></div>
                     </div>
-                    <button type="button" class="btn-senior-submit game-submit" @onclick="ContinueToNextStep" disabled="@(isSubmitting || gameState?.Phase != GamePhase.IN_PROGRESS)">Continuer</button>
+                    <p class="game-instructions">Scannez le QR code de cette étape pour y accéder, ou utilisez son code de secours.</p>
+                    <a href="/scanner" class="btn-senior-submit game-submit">Scanner le QR code</a>
+                    <a href="/code" class="btn-senior-submit game-submit">Saisir le code de secours</a>
                 </section>
             }
             else
@@ -323,18 +325,30 @@
         if (!await JS.InvokeAsync<bool>("confirm", "Valider définitivement cette réponse ?")) return;
 
         isSubmitting = true;
-        var result = await GamePlay.SubmitQcmAsync(team.Id, deviceToken, currentStep, question, selectedChoice.Value);
-        submissionMessage = result.Message;
-        submissionCorrect = result.IsCorrect;
-        lastPoints = result.PointsEarned;
-        if (result.Accepted)
+        try
         {
-            await EventService.NotifyTeamProgressChangedAsync(team.Id);
-            await EventService.NotifyTeamsChangedAsync();
-            await EventService.NotifyTeamScoreChangedAsync(team.Id);
-            await LoadCurrentStep();
+            var result = await GamePlay.SubmitQcmAsync(team.Id, deviceToken, currentStep, question, selectedChoice.Value);
+            submissionMessage = result.Message;
+            submissionCorrect = result.Accepted && result.IsCorrect;
+            lastPoints = result.PointsEarned;
+            if (result.Accepted)
+            {
+                await EventService.NotifyTeamProgressChangedAsync(team.Id);
+                await EventService.NotifyTeamsChangedAsync();
+                await EventService.NotifyTeamScoreChangedAsync(team.Id);
+                await LoadCurrentStep();
+            }
         }
-        isSubmitting = false;
+        catch
+        {
+            submissionMessage = "Impossible de valider la réponse pour le moment. Vérifiez la connexion et réessayez.";
+            submissionCorrect = false;
+            lastPoints = 0;
+        }
+        finally
+        {
+            isSubmitting = false;
+        }
     }
 
     private async Task SubmitGameScore()
@@ -355,24 +369,6 @@
         else
         {
             gameCompletionMessage = result.Message;
-        }
-        isSubmitting = false;
-    }
-
-    private async Task ContinueToNextStep()
-    {
-        if (team == null || deviceToken == null) return;
-        isSubmitting = true;
-        var result = await GamePlay.ContinueToNextStepAsync(team.Id, deviceToken);
-        submissionMessage = result.Message;
-        submissionCorrect = result.Accepted;
-        if (result.Accepted)
-        {
-            await EventService.NotifyTeamProgressChangedAsync(team.Id);
-            await LoadCurrentStep();
-        }
-        else
-        {
         }
         isSubmitting = false;
     }

@@ -52,11 +52,48 @@ public class GamePlayServiceTests
     {
         var (data, service, step, teams, tokens) = await CreateGameAsync(1);
 
+        await data.Teams.UpdateOneAsync(team => team.Id == teams[0].Id, team => team.UnlockedStepId = null);
+        var beforeScan = await service.SubmitGameScoreAsync(teams[0].Id, tokens[0], step, 8);
+        Assert.False(beforeScan.Accepted);
+        Assert.True((await service.UnlockStepAsync(teams[0].Id, step.Id)).Accepted);
+
         var result = await service.SubmitGameScoreAsync(teams[0].Id, tokens[0], step, step.MaxPoints + 1);
 
         Assert.False(result.Accepted);
         Assert.Empty(await data.GameScores.GetAllAsync());
         Assert.Equal(1, (await data.Teams.FindOneAsync(team => team.Id == teams[0].Id))?.CurrentStep);
+    }
+
+    [Fact]
+    public async Task SubmitQcm_AcceptsAndStoresIncorrectAnswer()
+    {
+        var data = new InMemoryGameDataStore();
+        var step = new QcmStep { Name = "Test question" };
+        var question = new Question { CorrectAnswer = Choice.A, Points = 10 };
+        await data.Steps.InsertOneAsync(step);
+        var team = new Team { Name = "Test team", RouteStepIds = new List<string> { step.Id } };
+        await data.Teams.InsertOneAsync(team);
+        await data.Questions.InsertOneAsync(question);
+        await data.GameStates.InsertOneAsync(new GameState { Phase = GamePhase.IN_PROGRESS });
+
+        var service = new GamePlayService(data);
+        var token = (await service.RegisterDeviceAsync(team.Id, null)).Token;
+        var beforeScan = await service.SubmitQcmAsync(team.Id, token, step, question, Choice.B);
+        Assert.False(beforeScan.Accepted);
+        Assert.Empty(await data.Submissions.GetAllAsync());
+        Assert.True((await service.UnlockStepAsync(team.Id, step.Id)).Accepted);
+
+        var result = await service.SubmitQcmAsync(team.Id, token, step, question, Choice.B);
+        var submission = await data.Submissions.FindOneAsync(item => item.TeamId == team.Id && item.StepId == step.Id);
+        var updatedTeam = await data.Teams.FindOneAsync(item => item.Id == team.Id);
+
+        Assert.True(result.Accepted);
+        Assert.False(result.IsCorrect);
+        Assert.Equal("Réponse enregistrée.", result.Message);
+        Assert.NotNull(submission);
+        Assert.False(submission.IsCorrect);
+        Assert.Equal(0, submission.PointsEarned);
+        Assert.Equal(2, updatedTeam?.CurrentStep);
     }
 
     [Fact]
@@ -66,8 +103,8 @@ public class GamePlayServiceTests
         var firstStep = new GameStep { Name = "First", MinPoints = 0, MaxPoints = 10 };
         var secondStep = new GameStep { Name = "Second", MinPoints = 0, MaxPoints = 10 };
         await data.Steps.InsertManyAsync(new Step[] { firstStep, secondStep });
-        var firstTeam = new Team { Name = "First team", RouteStepIds = new List<string> { firstStep.Id, secondStep.Id } };
-        var secondTeam = new Team { Name = "Second team", RouteStepIds = new List<string> { secondStep.Id, firstStep.Id } };
+        var firstTeam = new Team { Name = "First team", RouteStepIds = new List<string> { firstStep.Id, secondStep.Id }, UnlockedStepId = firstStep.Id };
+        var secondTeam = new Team { Name = "Second team", RouteStepIds = new List<string> { secondStep.Id, firstStep.Id }, UnlockedStepId = secondStep.Id };
         await data.Teams.InsertManyAsync(new[] { firstTeam, secondTeam });
         await data.GameStates.InsertOneAsync(new GameState
         {
@@ -95,10 +132,11 @@ public class GamePlayServiceTests
         var bypassResult = await service.SubmitGameScoreAsync(firstTeam.Id, firstToken, secondStep, 6);
         Assert.False(bypassResult.Accepted);
 
-        var continueResult = await service.ContinueToNextStepAsync(firstTeam.Id, firstToken);
+        var continueResult = await service.UnlockStepAsync(firstTeam.Id, secondStep.Id);
         var continuedTeam = await data.Teams.FindOneAsync(team => team.Id == firstTeam.Id);
         Assert.True(continueResult.Accepted);
         Assert.False(continuedTeam?.IsBetweenSteps);
+        Assert.Equal(secondStep.Id, continuedTeam?.UnlockedStepId);
     }
 
     [Fact]
@@ -133,7 +171,7 @@ public class GamePlayServiceTests
         await data.Steps.InsertOneAsync(step);
 
         var teams = Enumerable.Range(0, teamCount)
-            .Select(index => new Team { Name = $"Team {index + 1}", RouteStepIds = new List<string> { step.Id } })
+            .Select(index => new Team { Name = $"Team {index + 1}", RouteStepIds = new List<string> { step.Id }, UnlockedStepId = step.Id })
             .ToList();
         await data.Teams.InsertManyAsync(teams);
 

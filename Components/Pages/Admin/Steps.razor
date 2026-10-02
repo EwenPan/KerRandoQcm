@@ -45,8 +45,8 @@
             <textarea id="instructions" @bind="newStep.Instructions" class="form-control" rows="3"></textarea>
         </div>
         <div class="form-field">
-            <label class="form-label" for="transitionHint">Indication avant cette étape</label>
-            <textarea id="transitionHint" @bind="newStep.TransitionHint" class="form-control" rows="2" placeholder="Indiquez aux équipes où aller ensuite"></textarea>
+            <label class="form-label" for="transitionHint">Indication avant cette étape (obligatoire)</label>
+            <textarea id="transitionHint" @bind="newStep.TransitionHint" @bind:event="oninput" required class="form-control" rows="2" placeholder="Indiquez aux équipes où aller ensuite"></textarea>
             <p class="form-help">Cette indication s'affiche pendant la transition vers cette étape.</p>
         </div>
         @if (selectedType == StepType.QCM)
@@ -136,6 +136,7 @@
     <section class="admin-card">
         <div class="card-header">
             <h2>Ordre du parcours (@steps.Count étapes)</h2>
+            <button type="button" class="btn-primary no-print" @onclick="PrintStepQrs" disabled="@(steps.Count == 0)">Imprimer les QR codes</button>
         </div>
         <p class="section-desc">Les parcours de toutes les équipes seront générés automatiquement au lancement, avec des ordres différents et au plus deux étapes consécutives communes.</p>
         <div class="table-responsive">
@@ -165,13 +166,17 @@
                             <td>@step.Destination</td>
                             <td>
                                 <details>
-                                    <summary>@(string.IsNullOrWhiteSpace(step.TransitionHint) ? "Ajouter" : "Modifier")</summary>
+                                    <summary>@(string.IsNullOrWhiteSpace(step.TransitionHint) ? "Indication obligatoire" : step.TransitionHint)</summary>
                                     <div class="form-field">
-                                        <textarea @bind="step.TransitionHint" class="form-control" rows="2" aria-label="Indication avant @step.Name"></textarea>
+                                        <textarea @bind="step.TransitionHint" @bind:event="oninput" required class="form-control" rows="2" aria-label="Indication avant @step.Name (obligatoire)"></textarea>
                                         <button type="button" class="btn-primary" @onclick="() => SaveTransitionHint(step)" disabled="@string.IsNullOrWhiteSpace(step.TransitionHint)">Enregistrer</button>
                                         @if (savedTransitionHintStepId == step.Id)
                                         {
                                             <span role="status">Enregistrée</span>
+                                        }
+                                        @if (failedTransitionHintStepId == step.Id)
+                                        {
+                                            <span role="alert">Impossible d'enregistrer l'indication.</span>
                                         }
                                     </div>
                                 </details>
@@ -179,7 +184,7 @@
                             <td>
                                 @if (!string.IsNullOrWhiteSpace(step.QrToken))
                                 {
-                                    <img src="@QrService.GenerateQrCodeDataUri(Nav.ToAbsoluteUri($"/scan/{step.QrToken}").ToString())" alt="QR de @step.Name" class="step-qr-image" />
+                                    <img src="@QrService.GenerateQrCodeDataUri(step.QrToken!)" alt="QR de @step.Name" class="step-qr-image" />
                                 }
                             </td>
                             <td><strong>@step.ShortCode</strong></td>
@@ -192,6 +197,24 @@
                     }
                 </tbody>
             </table>
+        </div>
+    </section>
+
+    <section class="step-qr-print-sheet" aria-label="QR codes des étapes">
+        <h1>QR codes des étapes</h1>
+        <div class="step-qr-print-grid">
+            @foreach (var step in steps)
+            {
+                <article class="step-qr-print-item">
+                    <h2>@step.Name</h2>
+                    @if (!string.IsNullOrWhiteSpace(step.QrToken))
+                    {
+                        <img src="@QrService.GenerateQrCodeDataUri(step.QrToken)" alt="QR de @step.Name" />
+                    }
+                    <p>@step.Destination</p>
+                    <p>Code de secours : <strong>@step.ShortCode</strong></p>
+                </article>
+            }
         </div>
     </section>
 </div>
@@ -207,6 +230,7 @@
     private bool isSaving;
     private bool isProcessingMedia;
     private string? savedTransitionHintStepId;
+    private string? failedTransitionHintStepId;
 
     protected override async Task OnInitializedAsync() => await LoadData();
 
@@ -398,9 +422,31 @@
     private async Task SaveTransitionHint(Step step)
     {
         var transitionHint = step.TransitionHint.Trim();
-        await Data.Steps.UpdateOneAsync(currentStep => currentStep.Id == step.Id, currentStep => currentStep.TransitionHint = transitionHint);
-        step.TransitionHint = transitionHint;
-        savedTransitionHintStepId = step.Id;
+        savedTransitionHintStepId = null;
+        failedTransitionHintStepId = null;
+
+        try
+        {
+            await Data.Steps.UpdateOneAsync(currentStep => currentStep.Id == step.Id, currentStep => currentStep.TransitionHint = transitionHint);
+            var savedStep = await Data.Steps.FindOneAsync(currentStep => currentStep.Id == step.Id);
+            if (savedStep == null || savedStep.TransitionHint != transitionHint)
+            {
+                failedTransitionHintStepId = step.Id;
+                return;
+            }
+
+            await LoadData();
+            savedTransitionHintStepId = step.Id;
+        }
+        catch
+        {
+            failedTransitionHintStepId = step.Id;
+        }
+    }
+
+    private async Task PrintStepQrs()
+    {
+        await JS.InvokeVoidAsync("window.print");
     }
 
 }
