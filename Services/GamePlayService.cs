@@ -35,11 +35,6 @@ public class GamePlayService
             return new DeviceRegistrationResult(true, rawToken, false);
         }
 
-        if (devices.Count >= 2)
-        {
-            return new DeviceRegistrationResult(false, string.Empty, false);
-        }
-
         await _data.TeamDevices.InsertOneAsync(new TeamDevice
         {
             TeamId = teamId,

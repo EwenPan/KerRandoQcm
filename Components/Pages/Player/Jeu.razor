@@ -27,7 +27,7 @@
     {
         <div class="game-shell game-empty">
             <span class="game-kicker">Appareil non autorisé</span>
-            <h1>Cette équipe utilise déjà deux téléphones</h1>
+            <h1>Impossible d'autoriser cet appareil</h1>
             <p>Demandez à l'organisateur de réinitialiser un appareil avant de continuer.</p>
             <a href="/inscription" class="btn-senior-submit">Choisir une équipe</a>
         </div>
@@ -116,12 +116,12 @@
             else
             {
                 <section class="game-step-card">
-                    <div class="game-step-meta"><span>Étape @(completedCount + 1)</span><span class="game-type-pill">@(currentStep.Type == StepType.QCM ? "Question" : "Jeu")</span></div>
+                    <div class="game-step-meta"><span>Étape @(completedCount + 1)</span><span class="game-type-pill">@(currentStep is GameStep ? "Jeu" : "Question")</span></div>
                     <h2>@currentStep.Name</h2>
                     <div class="game-destination"><span class="game-location-icon">⌖</span><div><small>Destination</small><strong>@currentStep.Destination</strong></div></div>
                     <p class="game-instructions">@currentStep.Instructions</p>
 
-                    @if (currentStep.Type == StepType.QCM && question != null)
+                    @if (currentStep is QcmStep && question != null)
                     {
                         <div class="game-question">
                             <h3>@question.Title</h3>
@@ -158,9 +158,8 @@
                             </button>
                         </div>
                     }
-                    else if (currentStep.Type == StepType.GAME)
+                    else if (currentStep is GameStep gameStep)
                     {
-                        var gameStep = (GameStep)currentStep;
                         <div class="game-coming-soon">
                             <strong>Jeu à réaliser sur place</strong>
                             <p>Présentez-vous à la destination, puis suivez les consignes de l'organisateur.</p>

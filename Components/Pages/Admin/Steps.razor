@@ -148,7 +148,7 @@
                         <tr>
                             <td>@(index + 1)</td>
                             <td><strong>@step.Name</strong><br /><span class="text-muted">@step.Instructions</span></td>
-                            <td>@(step.Type == StepType.QCM ? "QCM" : "Jeu")</td>
+                            <td>@(step is GameStep ? "Jeu" : "QCM")</td>
                             <td>
                                 @if (step is GameStep listedGame)
                                 {
@@ -245,6 +245,7 @@
         if (!Enum.TryParse<StepType>(args.Value?.ToString(), out var type)) return;
         selectedType = type;
         newStep = type == StepType.QCM ? new QcmStep() : new GameStep();
+        newStep.Type = type;
         editingQuestion = CreateQuestion();
         message = null;
     }
