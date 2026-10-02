@@ -115,6 +115,7 @@ public class GamePlayService
                 TeamId = teamId,
                 QuestionId = question.Id,
                 StepId = step.Id,
+                StationId = string.IsNullOrWhiteSpace(question.StationId) ? null : question.StationId,
                 ChosenAnswer = choice,
                 IsCorrect = isCorrect,
                 PointsEarned = points,

@@ -1049,25 +1049,68 @@ body {
     z-index: 1000;
     display: grid;
     place-items: center;
-    padding: 1rem;
+    padding: 0;
     background: rgba(15, 23, 42, 0.86);
     cursor: zoom-out;
 }
 
 .image-viewer-content {
     position: relative;
-    max-width: 96vw;
-    max-height: 94vh;
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
     cursor: default;
 }
 
 .image-viewer-image {
     display: block;
-    max-width: 96vw;
-    max-height: 88vh;
-    object-fit: contain;
+    max-width: none;
+    max-height: none;
+    margin: 0 auto;
+    background: #fff;
+}
+
+.image-viewer-toolbar {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+    padding: 0.5rem;
+    background: #fff;
+}
+
+.image-viewer-toolbar button {
+    width: 2.75rem;
+    height: 2.75rem;
+    border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     background: #fff;
+    color: var(--text-main);
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+.image-viewer-toolbar button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.image-viewer-scale {
+    width: 3.5rem;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+.image-viewer-viewport {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    overscroll-behavior: contain;
+    touch-action: pan-x pan-y;
+    cursor: grab;
 }
 
 .image-viewer-close {

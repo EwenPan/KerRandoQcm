@@ -236,7 +236,8 @@ public class Submission : IEntity
 
     [BsonElement("station_id")]
     [BsonRepresentation(BsonType.ObjectId)]
-    public string StationId { get; set; } = string.Empty;
+    [BsonIgnoreIfNull]
+    public string? StationId { get; set; }
 
     [BsonElement("chosen_answer")]
     [BsonRepresentation(BsonType.String)]

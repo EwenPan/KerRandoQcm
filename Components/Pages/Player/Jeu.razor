@@ -6,6 +6,7 @@
 @inject GameEventService EventService
 @inject IJSRuntime JS
 @inject NavigationManager Nav
+@inject ILogger<Jeu> Logger
 
 <PageTitle>Ma progression - KerRando QCM</PageTitle>
 
@@ -50,8 +51,8 @@
 
             @if (team.RevealedCharacters.Count > 0 && currentStep != null)
             {
-                <section class="revealed-word" aria-label="Caractères découverts">
-                    <span>Votre indice</span>
+                <section class="revealed-word" aria-label="Lettres gagnées en récompense">
+                    <span>Lettres gagnées</span>
                     <strong>@GetRevealedCharacters()</strong>
                 </section>
             }
@@ -68,7 +69,7 @@
                     <h2>Parcours terminé</h2>
                     @if (route.Count > 0)
                     {
-                        <p>Rassemblez les lettres découvertes et trouvez le mot final.</p>
+                        <p>Retrouvez le mot final avec toutes les lettres gagnées.</p>
                         <strong class="final-word-letters">@GetRevealedCharacters()</strong>
                         @if (team.FinalWordAccepted == true)
                         {
@@ -102,7 +103,9 @@
                     }
                     @if (team.IsBetweenSteps && gameState != null && !string.IsNullOrWhiteSpace(gameState.TransitionImageData))
                     {
-                        <img src="@gameState.TransitionImageData" alt="Carte de l'étape suivante" class="game-transition-image" />
+                        <button type="button" class="image-zoom-trigger" @onclick='() => OpenImage(gameState.TransitionImageData, "Carte de l’étape suivante")' aria-label="Agrandir la carte">
+                            <img src="@gameState.TransitionImageData" alt="Carte de l'étape suivante" class="game-transition-image" />
+                        </button>
                     }
                     <div class="game-destination game-next-destination">
                         <span class="game-location-icon">⌖</span>
@@ -195,10 +198,19 @@
 
     @if (enlargedImage != null)
     {
-        <div class="image-viewer" role="dialog" aria-modal="true" aria-label="@enlargedImageAlt" @onclick="CloseImage">
+        <div id="game-image-viewer" class="image-viewer" role="dialog" aria-modal="true" aria-label="@enlargedImageAlt" @onclick="CloseImage">
             <div class="image-viewer-content" @onclick:stopPropagation="true">
-                <button type="button" class="image-viewer-close" @onclick="CloseImage" aria-label="Fermer l'image">×</button>
-                <img src="@enlargedImage" alt="@enlargedImageAlt" class="image-viewer-image" />
+                <div class="image-viewer-toolbar">
+                    <button type="button" data-image-action="out" title="Dézoomer" aria-label="Dézoomer">−</button>
+                    <output class="image-viewer-scale" aria-live="polite">100 %</output>
+                    <button type="button" data-image-action="in" title="Zoomer" aria-label="Zoomer">+</button>
+                    <button type="button" data-image-action="reset" title="Taille initiale" aria-label="Taille initiale">↺</button>
+                    <button type="button" data-image-action="fullscreen" title="Plein écran" aria-label="Plein écran">⛶</button>
+                    <button type="button" @onclick="CloseImage" title="Fermer" aria-label="Fermer l'image">×</button>
+                </div>
+                <div class="image-viewer-viewport" tabindex="0" aria-label="@enlargedImageAlt">
+                    <img src="@enlargedImage" alt="@enlargedImageAlt" class="image-viewer-image" draggable="false" />
+                </div>
             </div>
         </div>
     }
@@ -227,16 +239,19 @@
     private bool deviceAllowed;
     private bool isLoading = true;
     private bool isSubmitting;
+    private bool initializeImageViewer;
 
     private void OpenImage(string? image, string alt)
     {
         if (string.IsNullOrWhiteSpace(image)) return;
         enlargedImage = image;
         enlargedImageAlt = alt;
+        initializeImageViewer = true;
     }
 
-    private void CloseImage()
+    private async Task CloseImage()
     {
+        await JS.InvokeVoidAsync("kerrandoImageViewer.close");
         enlargedImage = null;
         enlargedImageAlt = string.Empty;
     }
@@ -261,6 +276,11 @@
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {
+        if (initializeImageViewer)
+        {
+            initializeImageViewer = false;
+            await JS.InvokeVoidAsync("kerrandoImageViewer.open", "game-image-viewer");
+        }
         if (!firstRender) return;
         if (team == null)
         {
@@ -338,8 +358,9 @@
                 await LoadCurrentStep();
             }
         }
-        catch
+        catch (Exception ex)
         {
+            Logger.LogError(ex, "Échec de validation QCM pour l'équipe {TeamId}, étape {StepId}", team.Id, currentStep.Id);
             submissionMessage = "Impossible de valider la réponse pour le moment. Vérifiez la connexion et réessayez.";
             submissionCorrect = false;
             lastPoints = 0;

@@ -16,7 +16,10 @@ services:
     restart: unless-stopped
     ports:
       - "5000:5000"
+    volumes:
+      - data_protection_keys:/app/data-protection-keys
     environment:
+      - DataProtection__KeysPath=/app/data-protection-keys
       - UseInMemoryStore=false
       - ConnectionStrings__MongoDB=mongodb://mongodb:27017
       - MongoDbSettings__DatabaseName=KerRandoQcmDb
@@ -28,3 +31,4 @@ services:
 
 volumes:
   mongo_data:
+  data_protection_keys:

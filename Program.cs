@@ -7,8 +7,17 @@ using KerRandoQcm.Data.Mongo;
 using KerRandoQcm.Services;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var dataProtection = builder.Services.AddDataProtection()
+    .SetApplicationName("KerRandoQcm");
+var keysPath = builder.Configuration["DataProtection:KeysPath"];
+if (!string.IsNullOrWhiteSpace(keysPath))
+{
+    dataProtection.PersistKeysToFileSystem(new DirectoryInfo(keysPath));
+}
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
