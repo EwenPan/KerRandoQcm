@@ -68,10 +68,6 @@
                             <input id="finalWord" @bind="finalWordInput" maxlength="30" class="form-control" autocomplete="off" placeholder="Mot sans espaces" />
                         </div>
                         <div class="form-field">
-                            <label class="form-label" for="transitionHint">Indication entre les étapes</label>
-                            <textarea id="transitionHint" @bind="transitionHintInput" class="form-control" rows="2" placeholder="Indiquez aux équipes où aller ensuite"></textarea>
-                        </div>
-                        <div class="form-field">
                             <label class="form-label" for="transitionImage">Carte à afficher entre les étapes</label>
                             <InputFile id="transitionImage" OnChange="HandleTransitionImageSelected" accept="image/*" />
                             @if (isProcessingTransitionImage)
@@ -209,7 +205,6 @@
     private string? gameLaunchMessage;
     private bool gameLaunchIsError;
     private string finalWordInput = string.Empty;
-    private string transitionHintInput = string.Empty;
     private string? transitionImageData;
     private bool isProcessingTransitionImage;
     private GameState? gameState;
@@ -312,9 +307,16 @@
                 gameLaunchIsError = true;
                 return;
             }
-            if (string.IsNullOrWhiteSpace(transitionHintInput) || string.IsNullOrWhiteSpace(transitionImageData))
+            var stepsMissingTransitionHint = activeSteps.Where(step => string.IsNullOrWhiteSpace(step.TransitionHint)).Select(step => step.Name).ToList();
+            if (stepsMissingTransitionHint.Count > 0)
             {
-                gameLaunchMessage = "Ajoutez une indication et une carte pour les transitions entre les étapes.";
+                gameLaunchMessage = $"Ajoutez une indication à chaque étape active. À compléter : {string.Join(", ", stepsMissingTransitionHint)}.";
+                gameLaunchIsError = true;
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(transitionImageData))
+            {
+                gameLaunchMessage = "Ajoutez une carte pour les transitions entre les étapes.";
                 gameLaunchIsError = true;
                 return;
             }
@@ -358,7 +360,6 @@
                     StartedAt = routeStartTime,
                     FinalWord = finalWord,
                     ShuffledLetters = shuffledLetters,
-                    TransitionHint = transitionHintInput.Trim(),
                     TransitionImageData = transitionImageData
                 };
                 await Data.GameStates.InsertOneAsync(gameState);
@@ -372,7 +373,6 @@
                     state.EndedAt = null;
                     state.FinalWord = finalWord;
                     state.ShuffledLetters = shuffledLetters;
-                    state.TransitionHint = transitionHintInput.Trim();
                     state.TransitionImageData = transitionImageData;
                 });
             }
@@ -381,7 +381,6 @@
             gameState.EndedAt = null;
             gameState.FinalWord = finalWord;
             gameState.ShuffledLetters = shuffledLetters;
-            gameState.TransitionHint = transitionHintInput.Trim();
             gameState.TransitionImageData = transitionImageData;
 
             gameLaunchMessage = "Les parcours ont été générés et le jeu est lancé !";
@@ -561,6 +560,7 @@
                         Type = StepType.QCM,
                         Destination = "Point de test",
                         Instructions = "Répondez à cette question d'exemple.",
+                        TransitionHint = "Rejoignez le point de test suivant.",
                         QuestionId = existingQuestion.Id,
                         QrToken = Guid.NewGuid().ToString("N"),
                         ShortCode = Random.Shared.Next(100000, 1000000).ToString(),

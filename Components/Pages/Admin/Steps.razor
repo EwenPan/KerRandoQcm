@@ -44,6 +44,11 @@
             <label class="form-label" for="instructions">Consignes</label>
             <textarea id="instructions" @bind="newStep.Instructions" class="form-control" rows="3"></textarea>
         </div>
+        <div class="form-field">
+            <label class="form-label" for="transitionHint">Indication avant cette étape</label>
+            <textarea id="transitionHint" @bind="newStep.TransitionHint" class="form-control" rows="2" placeholder="Indiquez aux équipes où aller ensuite"></textarea>
+            <p class="form-help">Cette indication s'affiche pendant la transition vers cette étape.</p>
+        </div>
         @if (selectedType == StepType.QCM)
         {
             <div class="step-content-editor">
@@ -135,7 +140,7 @@
         <p class="section-desc">Les parcours de toutes les équipes seront générés automatiquement au lancement, avec des ordres différents et au plus deux étapes consécutives communes.</p>
         <div class="table-responsive">
             <table class="admin-table">
-                <thead><tr><th>#</th><th>Étape</th><th>Type</th><th>Contenu</th><th>Destination</th><th>QR</th><th>Code de secours</th><th></th></tr></thead>
+                <thead><tr><th>#</th><th>Étape</th><th>Type</th><th>Contenu</th><th>Destination</th><th>Indication</th><th>QR</th><th>Code de secours</th><th></th></tr></thead>
                 <tbody>
                     @foreach (var (step, index) in steps.Select((value, index) => (value, index)))
                     {
@@ -159,6 +164,19 @@
                             </td>
                             <td>@step.Destination</td>
                             <td>
+                                <details>
+                                    <summary>@(string.IsNullOrWhiteSpace(step.TransitionHint) ? "Ajouter" : "Modifier")</summary>
+                                    <div class="form-field">
+                                        <textarea @bind="step.TransitionHint" class="form-control" rows="2" aria-label="Indication avant @step.Name"></textarea>
+                                        <button type="button" class="btn-primary" @onclick="() => SaveTransitionHint(step)" disabled="@string.IsNullOrWhiteSpace(step.TransitionHint)">Enregistrer</button>
+                                        @if (savedTransitionHintStepId == step.Id)
+                                        {
+                                            <span role="status">Enregistrée</span>
+                                        }
+                                    </div>
+                                </details>
+                            </td>
+                            <td>
                                 @if (!string.IsNullOrWhiteSpace(step.QrToken))
                                 {
                                     <img src="@QrService.GenerateQrCodeDataUri(Nav.ToAbsoluteUri($"/scan/{step.QrToken}").ToString())" alt="QR de @step.Name" class="step-qr-image" />
@@ -170,7 +188,7 @@
                     }
                     @if (steps.Count == 0)
                     {
-                        <tr><td colspan="8" class="text-center text-muted">Aucune étape active.</td></tr>
+                        <tr><td colspan="9" class="text-center text-muted">Aucune étape active.</td></tr>
                     }
                 </tbody>
             </table>
@@ -188,6 +206,7 @@
     private bool messageIsError;
     private bool isSaving;
     private bool isProcessingMedia;
+    private string? savedTransitionHintStepId;
 
     protected override async Task OnInitializedAsync() => await LoadData();
 
@@ -215,6 +234,12 @@
             return;
         }
 
+        if (string.IsNullOrWhiteSpace(newStep.TransitionHint))
+        {
+            message = "Ajoutez une indication pour cette étape.";
+            return;
+        }
+
         if (selectedType == StepType.QCM && (string.IsNullOrWhiteSpace(editingQuestion.Title) || editingQuestion.Options.Count is < 2 or > 4 || editingQuestion.Options.Any(option => string.IsNullOrWhiteSpace(option.Content))))
         {
             message = "Renseignez la question et entre deux et quatre réponses.";
@@ -231,6 +256,7 @@
         newStep.Name = newStep.Name.Trim();
         newStep.Destination = newStep.Destination.Trim();
         newStep.Instructions = newStep.Instructions.Trim();
+        newStep.TransitionHint = newStep.TransitionHint.Trim();
         newStep.ShortCode = await GenerateShortCode();
         newStep.QrToken = Guid.NewGuid().ToString("N");
 
@@ -367,6 +393,14 @@
             await Data.Questions.DeleteOneAsync(question => question.Id == qcmStep.QuestionId);
         }
         await LoadData();
+    }
+
+    private async Task SaveTransitionHint(Step step)
+    {
+        var transitionHint = step.TransitionHint.Trim();
+        await Data.Steps.UpdateOneAsync(currentStep => currentStep.Id == step.Id, currentStep => currentStep.TransitionHint = transitionHint);
+        step.TransitionHint = transitionHint;
+        savedTransitionHintStepId = step.Id;
     }
 
 }

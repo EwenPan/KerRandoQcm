@@ -96,7 +96,10 @@
                 <section class="game-transition-card">
                     <span class="game-kicker">Étape @(completedCount) terminée</span>
                     <h2>En route pour la suite</h2>
-                    <p class="game-transition-hint">@gameState?.TransitionHint</p>
+                    @if (!string.IsNullOrWhiteSpace(currentStep?.TransitionHint))
+                    {
+                        <p class="game-transition-hint">@currentStep.TransitionHint</p>
+                    }
                     @if (!string.IsNullOrWhiteSpace(gameState?.TransitionImageData))
                     {
                         <img src="@gameState.TransitionImageData" alt="Carte de l'étape suivante" class="game-transition-image" />

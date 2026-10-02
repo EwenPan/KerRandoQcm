@@ -66,6 +66,9 @@ public class Step : IEntity
     [BsonElement("instructions")]
     public string Instructions { get; set; } = string.Empty;
 
+    [BsonElement("transition_hint")]
+    public string TransitionHint { get; set; } = string.Empty;
+
     [BsonElement("qr_token")]
     [BsonIgnoreIfNull]
     public string? QrToken { get; set; }
