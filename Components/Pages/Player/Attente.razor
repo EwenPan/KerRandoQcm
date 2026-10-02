@@ -27,14 +27,9 @@
             <div class="player-header">
                 <span class="player-badge">Votre équipe</span>
                 <h1 class="player-title" style="color: @(team.Color ?? "#2563eb")">@team.Name</h1>
-                <p class="player-subtitle">Tous les téléphones de cette équipe partagent la même progression.</p>
             </div>
 
             <div class="team-assigned-box" style="border-top: 6px solid @(team.Color ?? "#2563eb")">
-                <span class="team-badge" style="background-color: @(team.Color ?? "#2563eb")">Équipe sélectionnée</span>
-                <h2 class="team-title" style="color: @(team.Color ?? "#2563eb")">@team.Name</h2>
-                <p class="team-instruction">L'organisateur lancera le parcours quand toutes les équipes seront prêtes.</p>
-
                 @if (team.RouteStepIds.Count == 0)
                 {
                     <div class="waiting-box">

@@ -78,7 +78,7 @@
                         else
                         {
                             <label class="form-label" for="finalWordAnswer">Votre proposition</label>
-                            <input id="finalWordAnswer" @bind="finalWordInput" class="form-control" autocomplete="off" />
+                            <input id="finalWordAnswer" @bind:get="finalWordInput" @bind:set="value => finalWordInput = value?.ToUpperInvariant() ?? string.Empty" @bind:event="oninput" class="form-control" autocomplete="off" autocapitalize="characters" spellcheck="false" />
                             <button type="button" class="btn-senior-submit game-submit" @onclick="SubmitFinalWord" disabled="@(isSubmitting || string.IsNullOrWhiteSpace(finalWordInput) || gameState?.Phase != GamePhase.IN_PROGRESS)">Valider le mot</button>
                             @if (!string.IsNullOrWhiteSpace(finalWordMessage))
                             {
@@ -103,8 +103,9 @@
                     }
                     @if (team.IsBetweenSteps && gameState != null && !string.IsNullOrWhiteSpace(gameState.TransitionImageData))
                     {
-                        <button type="button" class="image-zoom-trigger" @onclick='() => OpenImage(gameState.TransitionImageData, "Carte de l’étape suivante")' aria-label="Agrandir la carte">
+                        <button type="button" class="image-zoom-trigger" @onclick='() => OpenImage(gameState.TransitionImageData, "Carte de l’étape suivante")' aria-label="Agrandir la carte" title="Agrandir la carte">
                             <img src="@gameState.TransitionImageData" alt="Carte de l'étape suivante" class="game-transition-image" />
+                            <span class="image-zoom-badge" aria-hidden="true"><img src="zoom-in.svg" alt="" /></span>
                         </button>
                     }
                     <div class="game-destination game-next-destination">
@@ -130,8 +131,9 @@
                             <h3>@question.Title</h3>
                             @if (!string.IsNullOrEmpty(question.ImageData))
                             {
-                                <button type="button" class="image-zoom-trigger" @onclick='() => OpenImage(question.ImageData, "Illustration de la question")' aria-label="Agrandir l'illustration de la question">
+                                <button type="button" class="image-zoom-trigger" @onclick='() => OpenImage(question.ImageData, "Illustration de la question")' aria-label="Agrandir l'illustration de la question" title="Agrandir la photo">
                                     <img src="@question.ImageData" alt="Illustration de la question" class="game-question-image" />
+                                    <span class="image-zoom-badge" aria-hidden="true"><img src="zoom-in.svg" alt="" /></span>
                                 </button>
                             }
                             <div class="game-choices">
@@ -142,7 +144,10 @@
                                         <span class="choice-content">
                                             @if (question.AnswerType == AnswerContentType.IMAGE)
                                             {
-                                                <img src="@choice.Value.Content" alt="Réponse @choice.Key" class="game-choice-image" @onclick='() => OpenImage(choice.Value.Content, $"Réponse {choice.Key}")' @onclick:stopPropagation="true" />
+                                                <span class="game-choice-zoom" role="button" tabindex="0" title="Agrandir la photo" aria-label="Agrandir la photo de la réponse @choice.Key" @onclick='() => OpenImage(choice.Value.Content, $"Réponse {choice.Key}")' @onclick:stopPropagation="true" @onkeydown='args => { if (args.Key is "Enter" or " ") OpenImage(choice.Value.Content, $"Réponse {choice.Key}"); }' @onkeydown:stopPropagation="true">
+                                                    <img src="@choice.Value.Content" alt="Réponse @choice.Key" class="game-choice-image" />
+                                                    <span class="image-zoom-badge" aria-hidden="true"><img src="zoom-in.svg" alt="" /></span>
+                                                </span>
                                             }
                                             else if (question.AnswerType == AnswerContentType.AUDIO)
                                             {

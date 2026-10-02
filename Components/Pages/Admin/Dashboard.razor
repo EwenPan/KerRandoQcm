@@ -65,7 +65,7 @@
                     <div class="admin-two-cols game-launch-configuration">
                         <div class="form-field">
                             <label class="form-label" for="finalWord">Mot final à retrouver</label>
-                            <input id="finalWord" @bind="finalWordInput" maxlength="30" class="form-control" autocomplete="off" placeholder="Mot sans espaces" />
+                            <input id="finalWord" @bind:get="finalWordInput" @bind:set="value => finalWordInput = value?.ToUpperInvariant() ?? string.Empty" @bind:event="oninput" maxlength="30" class="form-control" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Mot sans espaces" />
                         </div>
                         <div class="form-field">
                             <label class="form-label" for="transitionImage">Carte à afficher entre les étapes</label>
@@ -535,15 +535,34 @@
             }
 
             var sampleSteps = new List<Step>();
-            var sampleQuestions = new[]
+            var sampleDefinitions = new[]
             {
-                CreateSampleQuestion("Quel animal vit dans une ruche ?", "Une abeille", "Un renard", "Un héron", "Un cheval", Choice.A),
-                CreateSampleQuestion("Quelle couleur obtient-on avec du bleu et du jaune ?", "Rouge", "Vert", "Orange", "Violet", Choice.B),
-                CreateSampleQuestion("Combien de côtés possède un triangle ?", "Deux", "Trois", "Quatre", "Cinq", Choice.B)
+                (
+                    Name: "Test - Le jardin des abeilles",
+                    Destination: "Entrée du jardin communal, près du panneau du rucher",
+                    Instructions: "Restez près du panneau, sans vous approcher des ruches. Lisez la question et choisissez une seule réponse avec votre équipe.",
+                    TransitionHint: "Rejoignez l'entrée du jardin communal. Le QR code de cette étape se trouve sur le panneau du rucher.",
+                    Question: CreateSampleQuestion("Quel animal vit dans une ruche ?", "Une abeille", "Un renard", "Un héron", "Un cheval", Choice.A)
+                ),
+                (
+                    Name: "Test - L'atelier des couleurs",
+                    Destination: "Parvis de la salle communale, devant le panneau de peinture",
+                    Instructions: "Observez les couleurs présentées sur le panneau. Discutez du mélange proposé, puis sélectionnez une seule réponse.",
+                    TransitionHint: "Rendez-vous sur le parvis de la salle communale. Cherchez le panneau de peinture pour scanner le QR code de l'atelier.",
+                    Question: CreateSampleQuestion("Quelle couleur obtient-on avec du bleu et du jaune ?", "Rouge", "Vert", "Orange", "Violet", Choice.B)
+                ),
+                (
+                    Name: "Test - Le kiosque des formes",
+                    Destination: "Kiosque de la place du village, près du panneau des formes géométriques",
+                    Instructions: "Repérez le triangle sur le panneau des formes. Comptez ses côtés ensemble, puis validez une seule réponse.",
+                    TransitionHint: "Rejoignez le kiosque de la place du village. Le QR code est affiché à côté du panneau des formes géométriques.",
+                    Question: CreateSampleQuestion("Combien de côtés possède un triangle ?", "Deux", "Trois", "Quatre", "Cinq", Choice.B)
+                )
             };
 
-            foreach (var question in sampleQuestions)
+            foreach (var definition in sampleDefinitions)
             {
+                var question = definition.Question;
                 var existingQuestion = (await Data.Questions.GetAllAsync()).FirstOrDefault(item => item.Title == question.Title);
                 if (existingQuestion == null)
                 {
@@ -551,23 +570,37 @@
                     existingQuestion = question;
                 }
 
-                var stepName = $"Test - {question.Title}";
-                var existingStep = (await Data.Steps.GetAllAsync()).FirstOrDefault(step => step.Name == stepName);
+                var legacyStepName = $"Test - {question.Title}";
+                var existingStep = (await Data.Steps.GetAllAsync()).FirstOrDefault(step =>
+                    step is QcmStep && (step.Name == definition.Name || step.Name == legacyStepName));
                 if (existingStep == null)
                 {
                     existingStep = new QcmStep
                     {
-                        Name = stepName,
+                        Name = definition.Name,
                         Type = StepType.QCM,
-                        Destination = "Point de test",
-                        Instructions = "Répondez à cette question d'exemple.",
-                        TransitionHint = "Rejoignez le point de test suivant.",
+                        Destination = definition.Destination,
+                        Instructions = definition.Instructions,
+                        TransitionHint = definition.TransitionHint,
                         QuestionId = existingQuestion.Id,
                         QrToken = Guid.NewGuid().ToString("N"),
                         ShortCode = Random.Shared.Next(100000, 1000000).ToString(),
                         IsActive = true
                     };
                     await Data.Steps.InsertOneAsync(existingStep);
+                }
+                else
+                {
+                    await Data.Steps.UpdateOneAsync(step => step.Id == existingStep.Id, step =>
+                    {
+                        step.Name = definition.Name;
+                        step.Type = StepType.QCM;
+                        step.Destination = definition.Destination;
+                        step.Instructions = definition.Instructions;
+                        step.TransitionHint = definition.TransitionHint;
+                        step.IsActive = true;
+                        ((QcmStep)step).QuestionId = existingQuestion.Id;
+                    });
                 }
                 sampleSteps.Add(existingStep);
             }

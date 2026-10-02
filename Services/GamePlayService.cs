@@ -304,7 +304,7 @@ public class GamePlayService
             var isCorrect = normalizedAnswer == NormalizeWord(gameState.FinalWord);
             await _data.Teams.UpdateOneAsync(currentTeam => currentTeam.Id == teamId, currentTeam =>
             {
-                currentTeam.FinalWordAttempt = answer.Trim();
+                currentTeam.FinalWordAttempt = answer.Trim().ToUpperInvariant();
                 currentTeam.FinalWordAccepted = isCorrect;
                 currentTeam.FinalWordSubmittedAt = DateTime.UtcNow;
             });
