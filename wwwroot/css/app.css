@@ -1091,6 +1091,17 @@ body {
 }
 
 @media (max-width: 640px) {
+    .page-wrapper:has(.game-page) .top-nav {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        padding: 0.75rem;
+    }
+
+    .page-wrapper:has(.game-page) .nav-links {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
+
     .main-content:has(.game-page) {
         padding: 0;
     }
