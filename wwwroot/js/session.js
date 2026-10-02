@@ -86,33 +86,49 @@ window.kerrandoImageViewer = (() => {
             if (cleanup) cleanup();
             const root = document.getElementById(id);
             const viewport = root.querySelector('.image-viewer-viewport');
+            const stage = root.querySelector('.image-viewer-stage');
             const image = root.querySelector('img');
             const output = root.querySelector('output');
             const zoomOut = root.querySelector('[data-image-action="out"]');
             const zoomIn = root.querySelector('[data-image-action="in"]');
             const previousFocus = document.activeElement;
+            const previousOverflow = document.body.style.overflow;
+            document.body.style.overflow = 'hidden';
             let scale = 1;
-            let drag;
+            const pointers = new Map();
 
             function resize() {
                 if (!image.naturalWidth) return;
                 const fit = Math.min(viewport.clientWidth / image.naturalWidth,
                     viewport.clientHeight / image.naturalHeight, 1);
-                image.style.width = `${image.naturalWidth * fit * scale}px`;
-                image.style.height = `${image.naturalHeight * fit * scale}px`;
+                const width = image.naturalWidth * fit * scale;
+                const height = image.naturalHeight * fit * scale;
+                image.style.width = `${width}px`;
+                image.style.height = `${height}px`;
+                stage.style.width = `${Math.max(viewport.clientWidth, width)}px`;
+                stage.style.height = `${Math.max(viewport.clientHeight, height)}px`;
                 output.textContent = `${Math.round(scale * 100)} %`;
                 zoomOut.disabled = scale <= 1;
                 zoomIn.disabled = scale >= 4;
             }
 
-            function zoom(amount) {
-                const previousScale = scale;
-                const centerX = viewport.scrollLeft + viewport.clientWidth / 2;
-                const centerY = viewport.scrollTop + viewport.clientHeight / 2;
-                scale = Math.min(4, Math.max(1, scale + amount));
+            function zoomTo(nextScale, anchorX = viewport.clientWidth / 2, anchorY = viewport.clientHeight / 2,
+                targetX = anchorX, targetY = anchorY) {
+                if (!image.clientWidth || !image.clientHeight) return;
+                const offsetX = Math.max(0, (viewport.clientWidth - image.clientWidth) / 2);
+                const offsetY = Math.max(0, (viewport.clientHeight - image.clientHeight) / 2);
+                const imageX = (viewport.scrollLeft + anchorX - offsetX) / image.clientWidth;
+                const imageY = (viewport.scrollTop + anchorY - offsetY) / image.clientHeight;
+                scale = Math.min(4, Math.max(1, nextScale));
                 resize();
-                viewport.scrollLeft = centerX * scale / previousScale - viewport.clientWidth / 2;
-                viewport.scrollTop = centerY * scale / previousScale - viewport.clientHeight / 2;
+                viewport.scrollLeft = Math.max(0, (viewport.clientWidth - image.clientWidth) / 2)
+                    + imageX * image.clientWidth - targetX;
+                viewport.scrollTop = Math.max(0, (viewport.clientHeight - image.clientHeight) / 2)
+                    + imageY * image.clientHeight - targetY;
+            }
+
+            function zoom(amount) {
+                zoomTo(scale + amount);
             }
 
             async function click(event) {
@@ -139,18 +155,34 @@ window.kerrandoImageViewer = (() => {
             }
 
             function pointerDown(event) {
-                if (event.pointerType !== 'mouse' || scale === 1) return;
-                drag = { x: event.clientX, y: event.clientY, left: viewport.scrollLeft, top: viewport.scrollTop };
+                if (event.pointerType === 'mouse' && event.button !== 0) return;
+                pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
                 viewport.setPointerCapture(event.pointerId);
             }
 
             function pointerMove(event) {
-                if (!drag) return;
-                viewport.scrollLeft = drag.left - event.clientX + drag.x;
-                viewport.scrollTop = drag.top - event.clientY + drag.y;
+                const previous = pointers.get(event.pointerId);
+                if (!previous) return;
+                const oldPoints = [...pointers.values()];
+                pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+                if (pointers.size === 2) {
+                    const newPoints = [...pointers.values()];
+                    const oldDistance = Math.hypot(oldPoints[1].x - oldPoints[0].x, oldPoints[1].y - oldPoints[0].y);
+                    const newDistance = Math.hypot(newPoints[1].x - newPoints[0].x, newPoints[1].y - newPoints[0].y);
+                    if (oldDistance === 0) return;
+                    const rect = viewport.getBoundingClientRect();
+                    zoomTo(scale * newDistance / oldDistance,
+                        (oldPoints[0].x + oldPoints[1].x) / 2 - rect.left,
+                        (oldPoints[0].y + oldPoints[1].y) / 2 - rect.top,
+                        (newPoints[0].x + newPoints[1].x) / 2 - rect.left,
+                        (newPoints[0].y + newPoints[1].y) / 2 - rect.top);
+                } else if (pointers.size === 1) {
+                    viewport.scrollLeft -= event.clientX - previous.x;
+                    viewport.scrollTop -= event.clientY - previous.y;
+                }
             }
 
-            function pointerUp() { drag = null; }
+            function pointerUp(event) { pointers.delete(event.pointerId); }
 
             function keyDown(event) {
                 if (event.key === 'Escape' && !document.fullscreenElement) {
@@ -183,6 +215,7 @@ window.kerrandoImageViewer = (() => {
                 viewport.removeEventListener('pointerup', pointerUp);
                 viewport.removeEventListener('pointercancel', pointerUp);
                 image.removeEventListener('load', resize);
+                document.body.style.overflow = previousOverflow;
                 previousFocus?.focus();
                 cleanup = null;
             };
