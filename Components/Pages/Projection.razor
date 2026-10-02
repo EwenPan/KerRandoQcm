@@ -33,7 +33,6 @@
                     <div class="projection-team-main">
                         <div class="projection-team-heading">
                             <h2>@item.Team.Name</h2>
-                            <strong>@item.Team.TotalScore <span>points</span></strong>
                         </div>
                         <p class="projection-team-status">@item.Status</p>
                         <div class="projection-progress-line">
@@ -50,18 +49,6 @@
                                 <span>En route vers <strong>@item.CurrentStep.Destination</strong> · @item.CurrentStep.Name</span>
                             }
                         </p>
-                        @if (item.RawGameScores.Count > 0)
-                        {
-                            <details class="projection-details">
-                                <summary>Détail des jeux</summary>
-                                <div class="projection-result-columns">
-                                    @foreach (var result in item.RawGameScores)
-                                    {
-                                        <p>@result.StepName : @result.Score.RawScore points bruts@(result.Score.RankPointsAwarded.HasValue ? $", {result.Score.RankPointsAwarded} points de classement" : $", classement en attente, {result.RemainingTeams} équipe(s) à jouer")</p>
-                                    }
-                                </div>
-                            </details>
-                        }
                     </div>
                 </article>
             }
