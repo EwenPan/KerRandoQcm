@@ -5,12 +5,12 @@
 @inject IGameDataStore Data
 @inject GameEventService EventService
 
-<PageTitle>Classement en direct - KerRando QCM</PageTitle>
+<PageTitle>Projection - KerRando QCM</PageTitle>
 
 <main class="projection-page">
     <header class="projection-header">
         <div>
-            <p class="projection-eyebrow">KerRando QCM · Classement en direct</p>
+            <p class="projection-eyebrow">KerRando QCM · @(showRanking ? "Classement final" : "Suivi du parcours")</p>
             <h1>@GetPhaseLabel()</h1>
         </div>
         @if (gameState?.StartedAt is DateTime startedAt)
@@ -25,14 +25,27 @@
     }
     else
     {
-        <section class="projection-team-list" aria-label="Classement des équipes">
+        @if (AllTeamsFinished && !showRanking)
+        {
+            <div class="projection-ranking-action">
+                <button type="button" class="btn-launch-game" @onclick="RevealRanking">Afficher le classement final</button>
+            </div>
+        }
+        <section class="projection-team-list" aria-label="@(showRanking ? "Classement final des équipes" : "Progression des équipes")">
             @foreach (var item in projectionTeams)
             {
-                <article class="projection-team" style="--team-color: @(item.Team.Color ?? "#2563eb")">
-                    <div class="projection-rank">@(item.Rank).</div>
+                <article class="projection-team @(showRanking ? string.Empty : "projection-team-unranked")" style="--team-color: @(item.Team.Color ?? "#2563eb")">
+                    @if (showRanking)
+                    {
+                        <div class="projection-rank">@(item.Rank).</div>
+                    }
                     <div class="projection-team-main">
                         <div class="projection-team-heading">
                             <h2>@item.Team.Name</h2>
+                            @if (showRanking)
+                            {
+                                <strong>@item.Team.TotalScore <span>points</span></strong>
+                            }
                         </div>
                         <p class="projection-team-status">@item.Status</p>
                         <div class="projection-progress-line">
@@ -59,6 +72,14 @@
 @code {
     private List<ProjectionTeam> projectionTeams = new();
     private GameState? gameState;
+    private bool showRanking;
+    private DateTime? rankingStartedAt;
+    private bool AllTeamsFinished => projectionTeams.Count > 0 && projectionTeams.All(item =>
+        item.Route.Count > 0
+        && item.Route.Count == item.Team.RouteStepIds.Count
+        && item.Completed == item.Route.Count
+        && !item.Team.IsBetweenSteps
+        && (string.IsNullOrWhiteSpace(gameState?.FinalWord) || item.Team.FinalWordAccepted == true));
 
     protected override async Task OnInitializedAsync()
     {
@@ -69,11 +90,11 @@
         await LoadProjection();
     }
 
-    private string GetPhaseLabel() => gameState?.Phase switch
+    private string GetPhaseLabel() => showRanking ? "Classement final" : gameState?.Phase switch
     {
         GamePhase.IN_PROGRESS => "La partie est lancée",
         GamePhase.PAUSED => "Partie en pause",
-        GamePhase.FINISHED => "Classement final",
+        GamePhase.FINISHED => "Partie terminée",
         GamePhase.READY => "Prêts à jouer",
         _ => "En préparation"
     };
@@ -82,7 +103,6 @@
     {
         var teams = await Data.Teams.GetAllAsync();
         var steps = await Data.Steps.GetAllAsync();
-        var gameScores = await Data.GameScores.GetAllAsync();
         gameState = await Data.GameStates.FindOneAsync(_ => true);
         var stepsById = steps.ToDictionary(step => step.Id);
 
@@ -93,7 +113,6 @@
                 var completed = Math.Clamp(team.CurrentStep - 1, 0, route.Count);
                 var current = completed < route.Count ? route[completed] : null;
                 var status = route.Count == 0 ? "En attente du parcours" : current == null ? "Parcours terminé" : team.StartedAt == null ? "En attente du départ" : "En cours";
-                var teamScores = gameScores.Where(score => score.TeamId == team.Id).ToList();
                 return new ProjectionTeam
                 {
                     Team = team,
@@ -101,18 +120,32 @@
                     Completed = completed,
                     CurrentStep = current,
                     ProgressPercent = route.Count == 0 ? 0 : (int)Math.Round(completed * 100d / route.Count),
-                    RawGameScores = teamScores.Select(score => new GameResult(
-                        stepsById.GetValueOrDefault(score.StepId)?.Name ?? "Jeu",
-                        score,
-                        teams.Count(participant => participant.RouteStepIds.Contains(score.StepId)
-                            && gameScores.All(otherScore => otherScore.TeamId != participant.Id || otherScore.StepId != score.StepId)))).ToList(),
                     Status = status
                 };
             })
-            .OrderByDescending(item => item.Team.TotalScore)
-            .ThenBy(item => item.Team.Name)
+            .OrderBy(item => item.Team.Name)
             .ToList();
 
+        if (!AllTeamsFinished || (showRanking && rankingStartedAt != gameState?.StartedAt))
+        {
+            showRanking = false;
+        }
+        if (showRanking) RankTeams();
+    }
+
+    private async Task RevealRanking()
+    {
+        await LoadProjection();
+        if (!AllTeamsFinished) return;
+        showRanking = true;
+        rankingStartedAt = gameState?.StartedAt;
+        RankTeams();
+    }
+
+    private void RankTeams()
+    {
+        projectionTeams = projectionTeams.OrderByDescending(item => item.Team.TotalScore)
+            .ThenBy(item => item.Team.Name).ToList();
         var previousScore = int.MinValue;
         var previousRank = 0;
         for (var index = 0; index < projectionTeams.Count; index++)
@@ -152,8 +185,5 @@
         public int ProgressPercent { get; init; }
         public int Rank { get; set; }
         public string Status { get; init; } = string.Empty;
-        public List<GameResult> RawGameScores { get; init; } = new();
     }
-
-    private sealed record GameResult(string StepName, GameScore Score, int RemainingTeams);
 }
