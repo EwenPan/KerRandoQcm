@@ -97,11 +97,11 @@
                 <section class="game-transition-card">
                     <span class="game-kicker">@(team.IsBetweenSteps ? $"Étape {completedCount} terminée" : "Accès à l'étape")</span>
                     <h2>@(team.IsBetweenSteps ? "En route pour la suite" : "Déverrouillez cette étape")</h2>
-                    @if (team.IsBetweenSteps && !string.IsNullOrWhiteSpace(currentStep.TransitionHint))
+                    @if (!string.IsNullOrWhiteSpace(currentStep.TransitionHint))
                     {
                         <p class="game-transition-hint">@currentStep.TransitionHint</p>
                     }
-                    @if (team.IsBetweenSteps && gameState != null && !string.IsNullOrWhiteSpace(gameState.TransitionImageData))
+                    @if (gameState != null && !string.IsNullOrWhiteSpace(gameState.TransitionImageData))
                     {
                         <button type="button" class="image-zoom-trigger" @onclick='() => OpenImage(gameState.TransitionImageData, "Carte de l’étape suivante")' aria-label="Agrandir la carte" title="Agrandir la carte">
                             <img src="@gameState.TransitionImageData" alt="Carte de l'étape suivante" class="game-transition-image" />
