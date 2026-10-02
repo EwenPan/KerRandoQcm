@@ -41,7 +41,6 @@
                     <span class="game-kicker">Parcours en cours</span>
                     <h1>@team.Name</h1>
                 </div>
-                <div class="game-score" aria-label="Score actuel"><strong>@team.TotalScore</strong><span>points</span></div>
             </header>
 
             <section class="game-progress" aria-label="Progression du parcours">
@@ -171,7 +170,6 @@
                         <div class="game-coming-soon">
                             <strong>Jeu à réaliser sur place</strong>
                             <p>Présentez-vous à la destination, puis suivez les consignes de l'organisateur.</p>
-                            <span>Barème : @gameStep.MinPoints à @gameStep.MaxPoints points</span>
                             <label class="form-label game-score-label" for="gameScore">Score obtenu</label>
                             <input id="gameScore" type="number" min="@gameStep.MinPoints" max="@gameStep.MaxPoints" step="1" @bind="gameScoreInput" class="form-control" />
                             <button type="button" class="btn-senior-submit game-submit" @onclick="SubmitGameScore" disabled="@(isSubmitting || gameState?.Phase != GamePhase.IN_PROGRESS)">Valider le score</button>
@@ -188,7 +186,6 @@
             {
                 <div class="game-result @(submissionCorrect ? "game-result-good" : "game-result-neutral")">
                     <strong>@submissionMessage</strong>
-                    @if (lastPoints > 0) { <span>+@lastPoints point(s)</span> }
                 </div>
             }
 
@@ -387,7 +384,7 @@
         var result = await GamePlay.SubmitGameScoreAsync(team.Id, deviceToken, (GameStep)currentStep, gameScoreInput);
         if (result.Accepted)
         {
-            gameCompletionMessage = result.Message;
+            gameCompletionMessage = "Résultat enregistré.";
             await EventService.NotifyTeamProgressChangedAsync(team.Id);
             await EventService.NotifyTeamsChangedAsync();
             await EventService.NotifyTeamScoreChangedAsync(team.Id);
