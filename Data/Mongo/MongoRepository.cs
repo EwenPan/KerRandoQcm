@@ -28,6 +28,8 @@ public class MongoRepository<T> : IRepository<T> where T : class, IEntity
 
     public Task InsertOneAsync(T entity) => _collection.InsertOneAsync(entity);
 
+    public Task ReplaceOneAsync(T entity) => _collection.ReplaceOneAsync(item => item.Id == entity.Id, entity);
+
     public Task InsertManyAsync(IEnumerable<T> entities) => _collection.InsertManyAsync(entities);
 
     public Task DeleteOneAsync(Expression<Func<T, bool>> predicate) => _collection.DeleteOneAsync(predicate);

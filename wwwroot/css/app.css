@@ -521,6 +521,37 @@ body {
 }
 
 /* Admin Styles (Desktop Responsive) */
+.step-edit-dialog {
+    width: calc(100% - 1.5rem);
+    max-width: 56rem;
+    max-height: calc(100dvh - 1.5rem);
+    margin: auto;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    color: var(--text-main);
+    background: #fff;
+    overflow: auto;
+}
+
+.step-edit-dialog::backdrop {
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.step-edit-dialog > .admin-card {
+    margin: 0;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
+}
+
+.step-edit-dialog .form-control,
+.step-edit-dialog .select-control,
+.step-edit-dialog input[type="file"],
+.step-edit-dialog audio {
+    max-width: 100%;
+}
+
 .admin-container {
     max-width: 1200px;
     margin: 1rem auto;

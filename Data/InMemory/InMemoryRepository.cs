@@ -97,6 +97,16 @@ public class InMemoryRepository<T> : IRepository<T> where T : class, IEntity
         return Task.CompletedTask;
     }
 
+    public Task ReplaceOneAsync(T entity)
+    {
+        lock (_lock)
+        {
+            var index = _items.FindIndex(item => item.Id == entity.Id);
+            if (index >= 0) _items[index] = entity;
+        }
+        return Task.CompletedTask;
+    }
+
     public Task UpdateOneAsync(Expression<Func<T, bool>> predicate, Action<T> apply)
     {
         lock (_lock)

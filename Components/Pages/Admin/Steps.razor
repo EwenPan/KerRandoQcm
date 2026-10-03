@@ -7,22 +7,13 @@
 @inject GameEventService EventService
 @inject QrCodeService QrService
 @inject NavigationManager Nav
+@using System.Text.Json
 
 <PageTitle>Édition du parcours - KerRando QCM</PageTitle>
 
-<div class="admin-container">
-    <header class="admin-header">
-        <div>
-            <h1 class="admin-title">Édition du parcours</h1>
-            <p class="admin-subtitle">Créez les étapes et leur contenu au même endroit, puis publiez leur ordre aux équipes.</p>
-        </div>
-        <div class="admin-header-actions">
-            <a href="/admin" class="btn-outline-danger">Retour au tableau de bord</a>
-        </div>
-    </header>
-
-    <section class="admin-card">
-        <div class="card-header"><h2>Nouvelle étape</h2></div>
+@{
+    RenderFragment stepEditor = @<section class="admin-card">
+        <div class="card-header"><h2 id="step-editor-title">@(isEditing ? "Modifier l'étape" : "Nouvelle étape")</h2></div>
         <div class="admin-two-cols">
             <div class="form-field">
                 <label class="form-label" for="stepName">Nom de l'étape</label>
@@ -63,6 +54,7 @@
                     @if (!string.IsNullOrWhiteSpace(editingQuestion.ImageData))
                     {
                         <img src="@editingQuestion.ImageData" alt="Aperçu de la photo de la question" class="question-media-preview" />
+                        <button type="button" class="btn-outline-danger" @onclick="() => editingQuestion.ImageData = null">Retirer la photo</button>
                     }
                 </div>
                 <div class="form-field">
@@ -86,6 +78,17 @@
                             {
                                 <InputFile OnChange="@(args => HandleOptionFileSelected(option, args))" accept="@(editingQuestion.AnswerType == AnswerContentType.IMAGE ? "image/*" : "audio/*")" />
                                 <input @bind="option.Content" class="form-control" placeholder="URL du média (facultatif)" />
+                                @if (!string.IsNullOrWhiteSpace(option.Content))
+                                {
+                                    @if (editingQuestion.AnswerType == AnswerContentType.IMAGE)
+                                    {
+                                        <img src="@option.Content" alt="Réponse @option.Choice" class="question-media-preview" />
+                                    }
+                                    else
+                                    {
+                                        <audio controls src="@option.Content"></audio>
+                                    }
+                                }
                             }
                             @if (editingQuestion.Options.Count > 2)
                             {
@@ -125,13 +128,39 @@
         }
 
         <button class="btn-primary step-editor-action" @onclick="AddStep" disabled="@(isSaving || isProcessingMedia)">
-            @(selectedType == StepType.QCM ? "Enregistrer la question et ajouter l'étape" : "Ajouter l'étape")
+            @(isSaving ? "Enregistrement..." : isEditing ? "Enregistrer les modifications" : selectedType == StepType.QCM ? "Enregistrer la question et ajouter l'étape" : "Ajouter l'étape")
         </button>
+        @if (isEditing)
+        {
+            <button type="button" class="btn-outline-danger step-editor-action" @onclick="CancelEdit" disabled="@(isSaving || isProcessingMedia)">Annuler</button>
+        }
         @if (!string.IsNullOrEmpty(message))
         {
             <div class="alert @(messageIsError ? "alert-danger" : "alert-success") mt-3">@message</div>
         }
-    </section>
+    </section>;
+
+    <div class="admin-container">
+        <header class="admin-header">
+            <div>
+                <h1 class="admin-title">Édition du parcours</h1>
+                <p class="admin-subtitle">Créez les étapes et leur contenu au même endroit, puis publiez leur ordre aux équipes.</p>
+            </div>
+            <div class="admin-header-actions">
+                <a href="/admin" class="btn-outline-danger">Retour au tableau de bord</a>
+            </div>
+        </header>
+
+        @if (!isEditing)
+        {
+            @stepEditor
+        }
+        else
+        {
+            <dialog id="step-edit-dialog" class="step-edit-dialog" aria-labelledby="step-editor-title" @oncancel="CancelEdit" @oncancel:preventDefault="true">
+                @stepEditor
+            </dialog>
+        }
 
     <section class="admin-card">
         <div class="card-header">
@@ -188,7 +217,10 @@
                                 }
                             </td>
                             <td><strong>@step.ShortCode</strong></td>
-                            <td><button class="btn-icon-danger" @onclick="() => DeleteStep(step.Id)">Supprimer</button></td>
+                            <td>
+                                <button type="button" class="btn-primary" @onclick="() => OpenEditor(step.Id)" disabled="@(isSaving || isProcessingMedia)">Modifier</button>
+                                <button class="btn-icon-danger" @onclick="() => DeleteStep(step.Id)">Supprimer</button>
+                            </td>
                         </tr>
                     }
                     @if (steps.Count == 0)
@@ -218,6 +250,7 @@
         </div>
     </section>
 </div>
+}
 
 @code {
     private Step newStep = new QcmStep();
@@ -231,8 +264,19 @@
     private bool isProcessingMedia;
     private string? savedTransitionHintStepId;
     private string? failedTransitionHintStepId;
+    private bool isEditing;
+    private bool showEditDialog;
+    private Step? creationDraft;
+    private Question? creationQuestionDraft;
 
     protected override async Task OnInitializedAsync() => await LoadData();
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!showEditDialog) return;
+        showEditDialog = false;
+        await JS.InvokeVoidAsync("kerrandoDialogs.open", "step-edit-dialog");
+    }
 
     private async Task LoadData()
     {
@@ -244,9 +288,21 @@
     {
         if (!Enum.TryParse<StepType>(args.Value?.ToString(), out var type)) return;
         selectedType = type;
+        var previousStep = newStep;
         newStep = type == StepType.QCM ? new QcmStep() : new GameStep();
         newStep.Type = type;
-        editingQuestion = CreateQuestion();
+        if (isEditing)
+        {
+            CopyStepFields(previousStep, newStep);
+            if (newStep is QcmStep qcmStep && !string.IsNullOrEmpty(editingQuestion.Id))
+            {
+                qcmStep.QuestionId = editingQuestion.Id;
+            }
+        }
+        else
+        {
+            editingQuestion = CreateQuestion();
+        }
         message = null;
     }
 
@@ -265,15 +321,21 @@
             return;
         }
 
-        if (selectedType == StepType.QCM && (string.IsNullOrWhiteSpace(editingQuestion.Title) || editingQuestion.Options.Count is < 2 or > 4 || editingQuestion.Options.Any(option => string.IsNullOrWhiteSpace(option.Content))))
+        if (selectedType == StepType.QCM && (string.IsNullOrWhiteSpace(editingQuestion.Title) || editingQuestion.Options.Count is < 2 or > 4 || editingQuestion.Options.Any(option => string.IsNullOrWhiteSpace(option.Content)) || editingQuestion.Points < 0 || !editingQuestion.Options.Any(option => option.Choice == editingQuestion.CorrectAnswer)))
         {
-            message = "Renseignez la question et entre deux et quatre réponses.";
+            message = "Renseignez la question, deux à quatre réponses, une bonne réponse et des points positifs ou nuls.";
             return;
         }
 
         if (newStep is GameStep gameStep && (gameStep.MinPoints < 0 || gameStep.MaxPoints < gameStep.MinPoints))
         {
             message = "La fourchette de points est invalide.";
+            return;
+        }
+
+        if (isEditing)
+        {
+            await SaveEditedStep();
             return;
         }
 
@@ -301,6 +363,109 @@
         message = "Étape ajoutée. Générez puis publiez le parcours pour la rendre accessible aux équipes.";
         await LoadData();
         isSaving = false;
+    }
+
+    private async Task OpenEditor(string stepId)
+    {
+        var step = await Data.Steps.FindOneAsync(item => item.Id == stepId);
+        if (step == null) return;
+        var question = step is QcmStep qcmStep && qcmStep.QuestionId != null
+            ? await Data.Questions.FindOneAsync(item => item.Id == qcmStep.QuestionId)
+            : null;
+
+        creationDraft = newStep;
+        creationQuestionDraft = editingQuestion;
+        newStep = step is GameStep game
+            ? JsonSerializer.Deserialize<GameStep>(JsonSerializer.Serialize(game))!
+            : JsonSerializer.Deserialize<QcmStep>(JsonSerializer.Serialize((QcmStep)step))!;
+        selectedType = newStep is GameStep ? StepType.GAME : StepType.QCM;
+        newStep.Type = selectedType;
+        editingQuestion = question == null ? CreateQuestion() : JsonSerializer.Deserialize<Question>(JsonSerializer.Serialize(question))!;
+        if (editingQuestion.Options.Count == 0)
+        {
+            var legacyOptions = new[] { editingQuestion.OptionA, editingQuestion.OptionB, editingQuestion.OptionC, editingQuestion.OptionD };
+            editingQuestion.Options = legacyOptions.Select((content, index) => new AnswerOption { Choice = (Choice)index, Content = content })
+                .Where(option => !string.IsNullOrWhiteSpace(option.Content) || option.Choice is Choice.A or Choice.B).ToList();
+        }
+        message = null;
+        isEditing = true;
+        showEditDialog = true;
+    }
+
+    private void CancelEdit()
+    {
+        if (isSaving || isProcessingMedia) return;
+        RestoreCreationDraft();
+        message = null;
+    }
+
+    private void RestoreCreationDraft()
+    {
+        newStep = creationDraft ?? new QcmStep();
+        editingQuestion = creationQuestionDraft ?? CreateQuestion();
+        selectedType = newStep is GameStep ? StepType.GAME : StepType.QCM;
+        creationDraft = null;
+        creationQuestionDraft = null;
+        isEditing = false;
+        showEditDialog = false;
+    }
+
+    private static void CopyStepFields(Step source, Step target)
+    {
+        target.Id = source.Id;
+        target.Name = source.Name;
+        target.Destination = source.Destination;
+        target.Instructions = source.Instructions;
+        target.TransitionHint = source.TransitionHint;
+        target.QrToken = source.QrToken;
+        target.ShortCode = source.ShortCode;
+        target.IsActive = source.IsActive;
+    }
+
+    private async Task SaveEditedStep()
+    {
+        isSaving = true;
+        try
+        {
+            if (await Data.Steps.FindOneAsync(item => item.Id == newStep.Id) == null)
+            {
+                message = "Cette étape n'existe plus.";
+                return;
+            }
+            newStep.Name = newStep.Name.Trim();
+            newStep.Destination = newStep.Destination.Trim();
+            newStep.Instructions = newStep.Instructions.Trim();
+            newStep.TransitionHint = newStep.TransitionHint.Trim();
+            newStep.Type = selectedType;
+            if (newStep is QcmStep qcmStep)
+            {
+                editingQuestion.Title = editingQuestion.Title.Trim();
+                CopyOptionsToLegacyFields(editingQuestion);
+                if (string.IsNullOrEmpty(editingQuestion.Id))
+                    await Data.Questions.InsertOneAsync(editingQuestion);
+                else
+                    await Data.Questions.ReplaceOneAsync(editingQuestion);
+                qcmStep.QuestionId = editingQuestion.Id;
+            }
+            await Data.Steps.ReplaceOneAsync(newStep);
+            var affectedTeams = await Data.Teams.FindAsync(team => team.RouteStepIds.Contains(newStep.Id));
+            await LoadData();
+            RestoreCreationDraft();
+            messageIsError = false;
+            message = "Étape modifiée.";
+            await EventService.NotifyTeamsChangedAsync();
+            foreach (var team in affectedTeams)
+                await EventService.NotifyTeamProgressChangedAsync(team.Id);
+        }
+        catch (Exception)
+        {
+            messageIsError = true;
+            message = "Impossible d'enregistrer les modifications. Réessayez.";
+        }
+        finally
+        {
+            isSaving = false;
+        }
     }
 
     private static Question CreateQuestion() => new()

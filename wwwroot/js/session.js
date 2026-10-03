@@ -78,6 +78,13 @@ window.kerrandoSession = {
     }
 };
 
+window.kerrandoDialogs = {
+    open(id) {
+        const dialog = document.getElementById(id);
+        if (dialog && !dialog.open) dialog.showModal();
+    }
+};
+
 window.kerrandoImageViewer = (() => {
     let cleanup;
 
