@@ -69,13 +69,13 @@
                             {
                                 <p>@submission.Question.Title</p>
                                 <div class="supervision-answer-controls">
-                                    <select class="select-control" aria-label="Réponse de @item.Team.Name pour @submission.StepName" @bind="answerDrafts[submission.Submission.Id]" disabled="@(savingAnswerId != null)">
+                                    <select class="select-control" aria-label="Réponse de @item.Team.Name pour @submission.StepName" @bind="answerDrafts[submission.Submission.Id]" disabled="@(savingAnswerId != null || savingGameScoreId != null)">
                                         @foreach (var option in submission.Options)
                                         {
                                             <option value="@option.Choice">@option.Choice · @(submission.Question.AnswerType == AnswerContentType.TEXT ? option.Content : submission.Question.AnswerType == AnswerContentType.IMAGE ? "Photo" : "Son")</option>
                                         }
                                     </select>
-                                    <button type="button" class="btn-primary" @onclick="() => SaveAnswer(submission.Submission)" disabled="@(savingAnswerId != null)">
+                                    <button type="button" class="btn-primary" @onclick="() => SaveAnswer(submission.Submission)" disabled="@(savingAnswerId != null || savingGameScoreId != null)">
                                         @(savingAnswerId == submission.Submission.Id ? "Enregistrement..." : "Enregistrer")
                                     </button>
                                 </div>
@@ -99,7 +99,27 @@
                     }
                     @foreach (var score in item.GameScores)
                     {
-                        <p>@score.StepName · @score.Score.RawScore points bruts · @(score.Score.RankPointsAwarded.HasValue ? $"{score.Score.RankPointsAwarded} points de classement" : "classement en attente")</p>
+                        <div class="supervision-answer" @key="score.Score.Id">
+                            <p><strong>@score.StepName</strong> · @score.Score.RawScore points bruts · @(score.Score.RankPointsAwarded.HasValue ? $"{score.Score.RankPointsAwarded} points de classement" : "classement en attente")</p>
+                            @if (score.Step != null)
+                            {
+                                <label class="form-label" for="game-score-@score.Score.Id">Score brut</label>
+                                <div class="supervision-answer-controls">
+                                    <input id="game-score-@score.Score.Id" type="number" class="form-control" min="@score.Step.MinPoints" max="@score.Step.MaxPoints" step="1" @bind="gameScoreDrafts[score.Score.Id]" @bind:event="oninput" disabled="@(savingAnswerId != null || savingGameScoreId != null)" />
+                                    <button type="button" class="btn-primary" @onclick="() => SaveGameScore(score.Score)" disabled="@(savingAnswerId != null || savingGameScoreId != null || !gameScoreDrafts[score.Score.Id].HasValue)">
+                                        @(savingGameScoreId == score.Score.Id ? "Enregistrement..." : "Enregistrer")
+                                    </button>
+                                </div>
+                            }
+                            else
+                            {
+                                <p class="text-muted">Jeu supprimé : score non modifiable.</p>
+                            }
+                            @if (gameScoreMessages.TryGetValue(score.Score.Id, out var feedback))
+                            {
+                                <p role="status">@feedback</p>
+                            }
+                        </div>
                     }
                 </div>
             </div>
@@ -113,6 +133,9 @@
     private readonly Dictionary<string, Choice> answerDrafts = new();
     private readonly Dictionary<string, string> answerMessages = new();
     private string? savingAnswerId;
+    private readonly Dictionary<string, int?> gameScoreDrafts = new();
+    private readonly Dictionary<string, string> gameScoreMessages = new();
+    private string? savingGameScoreId;
     private string PhaseLabel => gameState?.Phase switch
     {
         GamePhase.IN_PROGRESS => "En cours",
@@ -143,6 +166,8 @@
         var stepsById = steps.ToDictionary(step => step.Id);
         foreach (var submission in submissions)
             answerDrafts.TryAdd(submission.Id, submission.ChosenAnswer);
+        foreach (var score in scores)
+            gameScoreDrafts.TryAdd(score.Id, score.RawScore);
 
         teams = allTeams.Select(team =>
         {
@@ -170,7 +195,7 @@
                     return new SupervisedSubmission(stepsById.GetValueOrDefault(submission.StepId ?? string.Empty)?.Name ?? "Question", submission, question, options);
                 }).ToList(),
                 GameScores = scores.Where(score => score.TeamId == team.Id).Select(score => new SupervisedScore(
-                    stepsById.GetValueOrDefault(score.StepId)?.Name ?? "Jeu", score)).ToList()
+                    stepsById.GetValueOrDefault(score.StepId)?.Name ?? "Jeu", score, stepsById.GetValueOrDefault(score.StepId) as GameStep)).ToList()
             };
         }).OrderBy(item => item.Team.Name).ToList();
     }
@@ -185,7 +210,7 @@
 
     private async Task SaveAnswer(Submission submission)
     {
-        if (savingAnswerId != null) return;
+        if (savingAnswerId != null || savingGameScoreId != null) return;
         savingAnswerId = submission.Id;
         answerMessages.Remove(submission.Id);
         try
@@ -210,6 +235,34 @@
         }
     }
 
+    private async Task SaveGameScore(GameScore score)
+    {
+        if (savingAnswerId != null || savingGameScoreId != null || gameScoreDrafts[score.Id] is not int rawScore) return;
+        savingGameScoreId = score.Id;
+        gameScoreMessages.Remove(score.Id);
+        try
+        {
+            var result = await GamePlay.CorrectGameScoreAsync(score.Id, rawScore);
+            gameScoreMessages[score.Id] = result.Message;
+            if (result.Accepted)
+            {
+                await LoadData();
+                await EventService.NotifyTeamsChangedAsync();
+                foreach (var team in teams.Where(item => item.GameScores.Any(itemScore => itemScore.Score.StepId == score.StepId)))
+                    await EventService.NotifyTeamScoreChangedAsync(team.Team.Id);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Impossible de corriger le score de jeu {ScoreId}", score.Id);
+            gameScoreMessages[score.Id] = "Impossible d'enregistrer le score. Réessayez.";
+        }
+        finally
+        {
+            savingGameScoreId = null;
+        }
+    }
+
     public void Dispose()
     {
         EventService.TeamsChanged -= HandleChanged;
@@ -231,5 +284,5 @@
     }
 
     private sealed record SupervisedSubmission(string StepName, Submission Submission, Question? Question, List<AnswerOption> Options);
-    private sealed record SupervisedScore(string StepName, GameScore Score);
+    private sealed record SupervisedScore(string StepName, GameScore Score, GameStep? Step);
 }

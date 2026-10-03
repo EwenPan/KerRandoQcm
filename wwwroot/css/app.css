@@ -536,7 +536,8 @@ body {
     margin-top: 0.5rem;
 }
 
-.supervision-answer-controls .select-control {
+.supervision-answer-controls .select-control,
+.supervision-answer-controls .form-control {
     flex: 1 1 12rem;
     min-width: 0;
     max-width: 100%;

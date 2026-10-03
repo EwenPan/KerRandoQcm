@@ -285,6 +285,39 @@ public class GamePlayService
         }
     }
 
+    public async Task<GameActionResult> CorrectGameScoreAsync(string scoreId, int rawScore)
+    {
+        await _submissionLock.WaitAsync();
+        try
+        {
+            var score = await _data.GameScores.FindOneAsync(item => item.Id == scoreId);
+            if (score == null) return new GameActionResult(false, "Ce score n'existe plus.");
+            var step = await _data.Steps.FindOneAsync(item => item.Id == score.StepId) as GameStep;
+            if (step == null) return new GameActionResult(false, "Cette étape de jeu n'existe plus.");
+            if (rawScore < step.MinPoints || rawScore > step.MaxPoints)
+                return new GameActionResult(false, $"Le score doit être compris entre {step.MinPoints} et {step.MaxPoints}.");
+
+            await _data.GameScores.UpdateOneAsync(item => item.Id == scoreId, item => item.RawScore = rawScore);
+            var rankingComplete = await CloseGameRankingIfCompleteAsync(step.Id);
+            var scores = await _data.GameScores.FindAsync(item => item.StepId == step.Id);
+            if (!rankingComplete)
+            {
+                foreach (var gameScore in scores)
+                    await _data.GameScores.UpdateOneAsync(item => item.Id == gameScore.Id, item => item.RankPointsAwarded = null);
+            }
+            foreach (var teamId in scores.Select(item => item.TeamId).Distinct())
+                await RecalculateTeamScoreAsync(teamId);
+
+            return new GameActionResult(true, rankingComplete
+                ? "Score modifié. Classement du jeu et totaux recalculés."
+                : "Score modifié. Classement en attente des autres équipes.");
+        }
+        finally
+        {
+            _submissionLock.Release();
+        }
+    }
+
     private async Task RecalculateTeamScoreAsync(string teamId)
     {
         var submissions = await _data.Submissions.FindAsync(item => item.TeamId == teamId);
