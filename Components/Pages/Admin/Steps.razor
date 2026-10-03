@@ -5,8 +5,10 @@
 @inject IJSRuntime JS
 @inject ImageProcessingService ImageService
 @inject GameEventService EventService
+@inject GamePlayService GamePlay
 @inject QrCodeService QrService
 @inject NavigationManager Nav
+@inject ILogger<Steps> Logger
 @using System.Text.Json
 
 <PageTitle>Édition du parcours - KerRando QCM</PageTitle>
@@ -275,7 +277,21 @@
     {
         if (!showEditDialog) return;
         showEditDialog = false;
-        await JS.InvokeVoidAsync("kerrandoDialogs.open", "step-edit-dialog");
+        try
+        {
+            await JS.InvokeVoidAsync("kerrandoDialogs.open", "step-edit-dialog");
+        }
+        catch (JSDisconnectedException)
+        {
+        }
+        catch (JSException ex)
+        {
+            Logger.LogError(ex, "Impossible d'ouvrir la modale de modification de l'étape {StepId}", newStep.Id);
+            RestoreCreationDraft();
+            messageIsError = true;
+            message = "Impossible d'ouvrir la modification. Actualisez la page pour charger la dernière version.";
+            await InvokeAsync(StateHasChanged);
+        }
     }
 
     private async Task LoadData()
@@ -437,6 +453,7 @@
             newStep.Instructions = newStep.Instructions.Trim();
             newStep.TransitionHint = newStep.TransitionHint.Trim();
             newStep.Type = selectedType;
+            var scoreTeamIds = new List<string>();
             if (newStep is QcmStep qcmStep)
             {
                 editingQuestion.Title = editingQuestion.Title.Trim();
@@ -444,7 +461,7 @@
                 if (string.IsNullOrEmpty(editingQuestion.Id))
                     await Data.Questions.InsertOneAsync(editingQuestion);
                 else
-                    await Data.Questions.ReplaceOneAsync(editingQuestion);
+                    scoreTeamIds = await GamePlay.UpdateQuestionAsync(editingQuestion);
                 qcmStep.QuestionId = editingQuestion.Id;
             }
             await Data.Steps.ReplaceOneAsync(newStep);
@@ -454,8 +471,11 @@
             messageIsError = false;
             message = "Étape modifiée.";
             await EventService.NotifyTeamsChangedAsync();
-            foreach (var team in affectedTeams)
-                await EventService.NotifyTeamProgressChangedAsync(team.Id);
+            foreach (var teamId in affectedTeams.Select(team => team.Id).Concat(scoreTeamIds).Distinct())
+            {
+                await EventService.NotifyTeamProgressChangedAsync(teamId);
+                await EventService.NotifyTeamScoreChangedAsync(teamId);
+            }
         }
         catch (Exception)
         {

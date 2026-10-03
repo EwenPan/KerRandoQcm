@@ -521,6 +521,27 @@ body {
 }
 
 /* Admin Styles (Desktop Responsive) */
+.supervision-answer {
+    margin-top: 0.75rem;
+    padding: 0.75rem 0;
+    border-bottom: 1px solid var(--border);
+    overflow-wrap: anywhere;
+}
+
+.supervision-answer-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+
+.supervision-answer-controls .select-control {
+    flex: 1 1 12rem;
+    min-width: 0;
+    max-width: 100%;
+}
+
 .step-edit-dialog {
     width: calc(100% - 1.5rem);
     max-width: 56rem;

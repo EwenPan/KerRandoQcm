@@ -108,6 +108,12 @@ public class GamePlayService
                 return new QcmSubmissionResult(false, existing.IsCorrect, existing.PointsEarned, "Cette étape a déjà été validée.");
             }
 
+            var savedQuestion = await _data.Questions.FindOneAsync(item => item.Id == question.Id);
+            if (savedQuestion == null)
+            {
+                return new QcmSubmissionResult(false, false, 0, "Cette question n'est plus disponible.");
+            }
+            question = savedQuestion;
             var isCorrect = question.CorrectAnswer == choice;
             var points = isCorrect ? question.Points : 0;
             await _data.Submissions.InsertOneAsync(new Submission
@@ -220,6 +226,75 @@ public class GamePlayService
         {
             _submissionLock.Release();
         }
+    }
+
+    public async Task<List<string>> UpdateQuestionAsync(Question question)
+    {
+        if (question.Points < 0) throw new InvalidOperationException("Les points doivent être positifs ou nuls.");
+        await _submissionLock.WaitAsync();
+        try
+        {
+            if (await _data.Questions.FindOneAsync(item => item.Id == question.Id) == null)
+                throw new InvalidOperationException("Cette question n'existe plus.");
+
+            await _data.Questions.ReplaceOneAsync(question);
+            var submissions = await _data.Submissions.FindAsync(item => item.QuestionId == question.Id);
+            foreach (var submission in submissions)
+            {
+                await _data.Submissions.UpdateOneAsync(item => item.Id == submission.Id, item =>
+                {
+                    item.IsCorrect = item.ChosenAnswer == question.CorrectAnswer;
+                    item.PointsEarned = item.IsCorrect ? question.Points : 0;
+                });
+            }
+
+            var teamIds = submissions.Select(item => item.TeamId).Distinct().ToList();
+            foreach (var teamId in teamIds) await RecalculateTeamScoreAsync(teamId);
+            return teamIds;
+        }
+        finally
+        {
+            _submissionLock.Release();
+        }
+    }
+
+    public async Task<GameActionResult> CorrectQcmAnswerAsync(string submissionId, Choice choice)
+    {
+        await _submissionLock.WaitAsync();
+        try
+        {
+            var submission = await _data.Submissions.FindOneAsync(item => item.Id == submissionId);
+            if (submission == null) return new GameActionResult(false, "Cette réponse n'existe plus.");
+            var question = await _data.Questions.FindOneAsync(item => item.Id == submission.QuestionId);
+            if (question == null) return new GameActionResult(false, "Cette question n'existe plus.");
+            if (!Enum.IsDefined(choice) || (question.Options.Count > 0 && !question.Options.Any(option => option.Choice == choice)))
+                return new GameActionResult(false, "Choisissez une réponse disponible pour cette question.");
+
+            await _data.Submissions.UpdateOneAsync(item => item.Id == submissionId, item =>
+            {
+                item.ChosenAnswer = choice;
+                item.IsCorrect = choice == question.CorrectAnswer;
+                item.PointsEarned = item.IsCorrect ? question.Points : 0;
+            });
+            await RecalculateTeamScoreAsync(submission.TeamId);
+            return new GameActionResult(true, "Réponse modifiée et score mis à jour.");
+        }
+        finally
+        {
+            _submissionLock.Release();
+        }
+    }
+
+    private async Task RecalculateTeamScoreAsync(string teamId)
+    {
+        var submissions = await _data.Submissions.FindAsync(item => item.TeamId == teamId);
+        var gameScores = await _data.GameScores.FindAsync(item => item.TeamId == teamId);
+        var totalScore = submissions.Sum(item => item.PointsEarned) + gameScores.Sum(item => item.RankPointsAwarded ?? 0);
+        await _data.Teams.UpdateOneAsync(item => item.Id == teamId, item =>
+        {
+            item.TotalScore = totalScore;
+            item.UpdatedAt = DateTime.UtcNow;
+        });
     }
 
     public async Task ResetDevicesAsync(string teamId)

@@ -1,3 +1,5 @@
+@inject Microsoft.AspNetCore.Mvc.ViewFeatures.IFileVersionProvider FileVersions
+
 <!DOCTYPE html>
 <html lang="fr">
 
@@ -8,7 +10,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/app.css" />
+    <link rel="stylesheet" href="@FileVersions.AddFileVersionToPath(string.Empty, "css/app.css")" />
     <HeadOutlet />
 </head>
 
@@ -22,8 +24,8 @@
         </div>
     </div>
     <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
-    <script src="js/session.js"></script>
-    <script src="js/qr-scanner.js"></script>
+    <script src="@FileVersions.AddFileVersionToPath(string.Empty, "js/session.js")"></script>
+    <script src="@FileVersions.AddFileVersionToPath(string.Empty, "js/qr-scanner.js")"></script>
     <script src="_framework/blazor.web.js"></script>
 </body>
 

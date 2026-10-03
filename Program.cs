@@ -11,6 +11,9 @@ using Microsoft.AspNetCore.DataProtection;
 
 var builder = WebApplication.CreateBuilder(args);
 
+builder.Services.AddMemoryCache();
+builder.Services.AddRazorPages();
+
 var dataProtection = builder.Services.AddDataProtection()
     .SetApplicationName("KerRandoQcm");
 var keysPath = builder.Configuration["DataProtection:KeysPath"];

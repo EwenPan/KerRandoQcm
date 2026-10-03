@@ -4,6 +4,8 @@
 @inject IGameDataStore Data
 @inject ImageProcessingService ImageService
 @inject IJSRuntime JS
+@inject GamePlayService GamePlay
+@inject GameEventService EventService
 
 <PageTitle>Éditeur de questions - KerRando QCM</PageTitle>
 
@@ -195,8 +197,8 @@
                         </div>
 
                         <div class="admin-header-actions mt-3">
-                            <button class="btn-primary" @onclick="SaveQuestion" disabled="@isProcessingImage">Enregistrer</button>
-                            <button class="btn-text-muted" @onclick="CancelEditQuestion">Annuler</button>
+                            <button class="btn-primary" @onclick="SaveQuestion" disabled="@(isProcessingImage || isSavingQuestion)">Enregistrer</button>
+                            <button class="btn-text-muted" @onclick="CancelEditQuestion" disabled="@isSavingQuestion">Annuler</button>
                         </div>
                     </div>
                 }
@@ -219,6 +221,7 @@
     private Question? editingQuestion;
     private bool isNewQuestion;
     private bool isProcessingImage;
+    private bool isSavingQuestion;
     private string? questionFormError;
 
     protected override async Task OnInitializedAsync()
@@ -312,6 +315,8 @@
             MediaType = question.MediaType,
             MediaUrl = question.MediaUrl,
             ImageData = question.ImageData,
+            AnswerType = question.AnswerType,
+            Options = question.Options.Select(option => new AnswerOption { Choice = option.Choice, Content = option.Content }).ToList(),
             OptionA = question.OptionA,
             OptionB = question.OptionB,
             OptionC = question.OptionC,
@@ -350,46 +355,58 @@
 
     private async Task SaveQuestion()
     {
-        if (editingQuestion == null || string.IsNullOrEmpty(selectedStationId)) return;
+        if (editingQuestion == null || string.IsNullOrEmpty(selectedStationId) || isSavingQuestion) return;
 
         if (string.IsNullOrWhiteSpace(editingQuestion.Title) ||
             string.IsNullOrWhiteSpace(editingQuestion.OptionA) ||
             string.IsNullOrWhiteSpace(editingQuestion.OptionB) ||
             string.IsNullOrWhiteSpace(editingQuestion.OptionC) ||
-            string.IsNullOrWhiteSpace(editingQuestion.OptionD))
+            string.IsNullOrWhiteSpace(editingQuestion.OptionD) || editingQuestion.Points < 0)
         {
-            questionFormError = "Veuillez renseigner l'énoncé et les 4 réponses.";
+            questionFormError = "Renseignez l'énoncé, les 4 réponses et des points positifs ou nuls.";
             return;
         }
 
         editingQuestion.StationId = selectedStationId;
 
-        if (isNewQuestion)
+        isSavingQuestion = true;
+        questionFormError = null;
+        try
         {
-            await Data.Questions.InsertOneAsync(editingQuestion);
-        }
-        else
-        {
-            var id = editingQuestion.Id;
-            var updated = editingQuestion;
-            await Data.Questions.UpdateOneAsync(q => q.Id == id, q =>
+            var affectedTeamIds = new List<string>();
+            if (isNewQuestion)
             {
-                q.Title = updated.Title;
-                q.MediaType = updated.MediaType;
-                q.MediaUrl = updated.MediaUrl;
-                q.ImageData = updated.ImageData;
-                q.OptionA = updated.OptionA;
-                q.OptionB = updated.OptionB;
-                q.OptionC = updated.OptionC;
-                q.OptionD = updated.OptionD;
-                q.CorrectAnswer = updated.CorrectAnswer;
-                q.Points = updated.Points;
-            });
-        }
+                await Data.Questions.InsertOneAsync(editingQuestion);
+            }
+            else
+            {
+                var contents = new[] { editingQuestion.OptionA, editingQuestion.OptionB, editingQuestion.OptionC, editingQuestion.OptionD };
+                foreach (var option in editingQuestion.Options) option.Content = contents[(int)option.Choice];
+                affectedTeamIds = await GamePlay.UpdateQuestionAsync(editingQuestion);
+            }
 
-        editingQuestion = null;
-        questions = await Data.Questions.FindAsync(q => q.StationId == selectedStationId);
-        questionCounts[selectedStationId] = questions.Count;
+            editingQuestion = null;
+            questions = await Data.Questions.FindAsync(q => q.StationId == selectedStationId);
+            questionCounts[selectedStationId] = questions.Count;
+            await EventService.NotifyTeamsChangedAsync();
+            foreach (var teamId in affectedTeamIds)
+            {
+                await EventService.NotifyTeamScoreChangedAsync(teamId);
+                await EventService.NotifyTeamProgressChangedAsync(teamId);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            questionFormError = ex.Message;
+        }
+        catch (Exception)
+        {
+            questionFormError = "Impossible d'enregistrer la question et de recalculer les scores. Réessayez.";
+        }
+        finally
+        {
+            isSavingQuestion = false;
+        }
     }
 
     private async Task DeleteQuestion(string questionId)

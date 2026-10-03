@@ -4,6 +4,8 @@
 @implements IDisposable
 @inject IGameDataStore Data
 @inject GameEventService EventService
+@inject GamePlayService GamePlay
+@inject ILogger<Supervision> Logger
 
 <PageTitle>Suivi en direct - KerRando QCM</PageTitle>
 
@@ -61,7 +63,32 @@
                     }
                     @foreach (var submission in item.Submissions)
                     {
-                        <p>@submission.StepName · réponse @submission.Submission.ChosenAnswer · @(submission.Submission.IsCorrect ? "correcte" : "incorrecte") · @submission.Submission.PointsEarned points</p>
+                        <div class="supervision-answer" @key="submission.Submission.Id">
+                            <p><strong>@submission.StepName</strong> · réponse @submission.Submission.ChosenAnswer · @(submission.Submission.IsCorrect ? "correcte" : "incorrecte") · @submission.Submission.PointsEarned points</p>
+                            @if (submission.Question != null)
+                            {
+                                <p>@submission.Question.Title</p>
+                                <div class="supervision-answer-controls">
+                                    <select class="select-control" aria-label="Réponse de @item.Team.Name pour @submission.StepName" @bind="answerDrafts[submission.Submission.Id]" disabled="@(savingAnswerId != null)">
+                                        @foreach (var option in submission.Options)
+                                        {
+                                            <option value="@option.Choice">@option.Choice · @(submission.Question.AnswerType == AnswerContentType.TEXT ? option.Content : submission.Question.AnswerType == AnswerContentType.IMAGE ? "Photo" : "Son")</option>
+                                        }
+                                    </select>
+                                    <button type="button" class="btn-primary" @onclick="() => SaveAnswer(submission.Submission)" disabled="@(savingAnswerId != null)">
+                                        @(savingAnswerId == submission.Submission.Id ? "Enregistrement..." : "Enregistrer")
+                                    </button>
+                                </div>
+                            }
+                            else
+                            {
+                                <p class="text-muted">Question supprimée : réponse non modifiable.</p>
+                            }
+                            @if (answerMessages.TryGetValue(submission.Submission.Id, out var feedback))
+                            {
+                                <p role="status">@feedback</p>
+                            }
+                        </div>
                     }
                 </div>
                 <div>
@@ -83,6 +110,9 @@
 @code {
     private List<SupervisedTeam> teams = new();
     private GameState? gameState;
+    private readonly Dictionary<string, Choice> answerDrafts = new();
+    private readonly Dictionary<string, string> answerMessages = new();
+    private string? savingAnswerId;
     private string PhaseLabel => gameState?.Phase switch
     {
         GamePhase.IN_PROGRESS => "En cours",
@@ -106,10 +136,13 @@
         var allTeams = await Data.Teams.GetAllAsync();
         var steps = await Data.Steps.GetAllAsync();
         var submissions = await Data.Submissions.GetAllAsync();
+        var questions = (await Data.Questions.GetAllAsync()).ToDictionary(question => question.Id);
         var scores = await Data.GameScores.GetAllAsync();
         var devices = await Data.TeamDevices.GetAllAsync();
         gameState = await Data.GameStates.FindOneAsync(_ => true);
         var stepsById = steps.ToDictionary(step => step.Id);
+        foreach (var submission in submissions)
+            answerDrafts.TryAdd(submission.Id, submission.ChosenAnswer);
 
         teams = allTeams.Select(team =>
         {
@@ -124,8 +157,18 @@
                 CurrentStep = current,
                 Status = route.Count == 0 ? "En attente du parcours" : current == null ? "Terminé" : team.StartedAt == null ? "En attente" : "En cours",
                 Devices = devices.Where(device => device.TeamId == team.Id).OrderByDescending(device => device.LastSeenAt).ToList(),
-                Submissions = submissions.Where(submission => submission.TeamId == team.Id).Select(submission => new SupervisedSubmission(
-                    route.FirstOrDefault(step => step.Id == submission.StepId)?.Name ?? "Question", submission)).ToList(),
+                Submissions = submissions.Where(submission => submission.TeamId == team.Id).Select(submission =>
+                {
+                    var question = questions.GetValueOrDefault(submission.QuestionId);
+                    var options = question == null ? new List<AnswerOption>() : question.Options.Count > 0 ? question.Options : new List<AnswerOption>
+                    {
+                        new() { Choice = Choice.A, Content = question.OptionA },
+                        new() { Choice = Choice.B, Content = question.OptionB },
+                        new() { Choice = Choice.C, Content = question.OptionC },
+                        new() { Choice = Choice.D, Content = question.OptionD }
+                    };
+                    return new SupervisedSubmission(stepsById.GetValueOrDefault(submission.StepId ?? string.Empty)?.Name ?? "Question", submission, question, options);
+                }).ToList(),
                 GameScores = scores.Where(score => score.TeamId == team.Id).Select(score => new SupervisedScore(
                     stepsById.GetValueOrDefault(score.StepId)?.Name ?? "Jeu", score)).ToList()
             };
@@ -139,6 +182,33 @@
     }
 
     private Task HandleTeamChanged(string _) => HandleChanged();
+
+    private async Task SaveAnswer(Submission submission)
+    {
+        if (savingAnswerId != null) return;
+        savingAnswerId = submission.Id;
+        answerMessages.Remove(submission.Id);
+        try
+        {
+            var result = await GamePlay.CorrectQcmAnswerAsync(submission.Id, answerDrafts[submission.Id]);
+            answerMessages[submission.Id] = result.Message;
+            if (result.Accepted)
+            {
+                await LoadData();
+                await EventService.NotifyTeamScoreChangedAsync(submission.TeamId);
+                await EventService.NotifyTeamsChangedAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Impossible de corriger la réponse {SubmissionId}", submission.Id);
+            answerMessages[submission.Id] = "Impossible d'enregistrer la correction. Réessayez.";
+        }
+        finally
+        {
+            savingAnswerId = null;
+        }
+    }
 
     public void Dispose()
     {
@@ -160,6 +230,6 @@
         public List<SupervisedScore> GameScores { get; init; } = new();
     }
 
-    private sealed record SupervisedSubmission(string StepName, Submission Submission);
+    private sealed record SupervisedSubmission(string StepName, Submission Submission, Question? Question, List<AnswerOption> Options);
     private sealed record SupervisedScore(string StepName, GameScore Score);
 }
